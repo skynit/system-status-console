@@ -12,7 +12,11 @@ mod service;
 #[allow(dead_code)]
 #[path = "../src/usage.rs"]
 mod usage;
+#[allow(dead_code)]
+#[path = "../src/speedtest.rs"]
+mod speedtest;
 
+use speedtest::SpeedTestHandle;
 use localdesk_domain::{
     REMOTE_FTP_CAPABILITY, REMOTE_SFTP_CAPABILITY, REMOTE_SMB_CAPABILITY, REMOTE_SSH_CAPABILITY,
     TRANSFERS_CAPABILITY,
@@ -62,7 +66,8 @@ async fn system_adapter_catalog_and_transfer_store_are_exposed_without_remote_ac
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         notes::NotesHandle::unavailable_for_test(),
         remote,
-        shutdown_rx,
+        SpeedTestHandle::new(),
+                shutdown_rx,
     ));
 
     let catalog = request_remote_capabilities(&path, RequestEnvelope::remote_capabilities())
@@ -237,7 +242,8 @@ async fn profile_crud_uses_revision_cas_and_persists_no_secret_value() {
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         notes::NotesHandle::unavailable_for_test(),
         remote,
-        shutdown_rx,
+        SpeedTestHandle::new(),
+                shutdown_rx,
     ));
 
     let profile_id = ProfileId::from_uuid(uuid::Uuid::from_u128(100));
@@ -362,7 +368,8 @@ async fn ssh_terminal_rejects_agent_forwarding_before_opening_a_network_connecti
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         notes::NotesHandle::unavailable_for_test(),
         remote,
-        shutdown_rx,
+        SpeedTestHandle::new(),
+                shutdown_rx,
     ));
 
     let profile_id = ProfileId::from_uuid(uuid::Uuid::from_u128(200));
@@ -461,7 +468,8 @@ async fn smb_diagnostic_connect_is_rejected_without_remote_access_or_capacity_us
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         notes::NotesHandle::unavailable_for_test(),
         remote,
-        shutdown_rx,
+        SpeedTestHandle::new(),
+                shutdown_rx,
     ));
 
     let profile_id = ProfileId::from_uuid(uuid::Uuid::from_u128(300));

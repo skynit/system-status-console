@@ -4,6 +4,8 @@ pub const APPD_HEALTH_CAPABILITY: &str = "appd.health.v1";
 pub const TELEMETRY_SNAPSHOT_CAPABILITY: &str = "telemetry.snapshot.v1";
 pub const NETWORK_SYSTEM_CAPABILITY: &str = "network.system.v1";
 pub const NETWORK_PER_APP_CAPABILITY: &str = "network.per_app.v1";
+pub const NETWORK_SPEEDTEST_CAPABILITY: &str = "network.speedtest.v1";
+pub const NETWORK_DEEPTEST_CAPABILITY: &str = "network.deeptest.v1";
 pub const USAGE_FOREGROUND_CAPABILITY: &str = "usage.foreground.v1";
 pub const REMOTE_SSH_CAPABILITY: &str = "remote.ssh.v1";
 pub const REMOTE_SFTP_CAPABILITY: &str = "remote.sftp.v1";
@@ -17,6 +19,8 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     TELEMETRY_SNAPSHOT_CAPABILITY,
     NETWORK_SYSTEM_CAPABILITY,
     NETWORK_PER_APP_CAPABILITY,
+    NETWORK_SPEEDTEST_CAPABILITY,
+    NETWORK_DEEPTEST_CAPABILITY,
     USAGE_FOREGROUND_CAPABILITY,
     REMOTE_SSH_CAPABILITY,
     REMOTE_SFTP_CAPABILITY,
@@ -93,6 +97,8 @@ pub struct CapabilityRuntime {
     pub telemetry_snapshot: CapabilityRuntimeState,
     pub network_system: CapabilityRuntimeState,
     pub network_per_app: CapabilityRuntimeState,
+    pub network_speedtest: CapabilityRuntimeState,
+    pub network_deeptest: CapabilityRuntimeState,
     pub usage_foreground: CapabilityRuntimeState,
     pub remote_ssh: CapabilityRuntimeState,
     pub remote_sftp: CapabilityRuntimeState,
@@ -115,6 +121,8 @@ impl CapabilityRuntime {
             telemetry_snapshot,
             network_system,
             network_per_app,
+            network_speedtest: CapabilityRuntimeState::unsupported("speedtest_tools_not_detected"),
+            network_deeptest: CapabilityRuntimeState::unsupported("deeptest_tools_not_detected"),
             usage_foreground,
             remote_ssh: CapabilityRuntimeState::unsupported("appd_remote_adapter_not_wired"),
             remote_sftp: CapabilityRuntimeState::unsupported("appd_remote_adapter_not_wired"),
@@ -123,6 +131,16 @@ impl CapabilityRuntime {
             transfers: CapabilityRuntimeState::unsupported("sqlite_driver_not_implemented"),
             notes: CapabilityRuntimeState::unsupported("appd_notes_not_wired"),
         }
+    }
+
+    pub fn with_speedtest(
+        mut self,
+        network_speedtest: CapabilityRuntimeState,
+        network_deeptest: CapabilityRuntimeState,
+    ) -> Self {
+        self.network_speedtest = network_speedtest;
+        self.network_deeptest = network_deeptest;
+        self
     }
 
     pub fn with_remote(
@@ -174,6 +192,18 @@ pub fn capability_catalog(runtime: &CapabilityRuntime) -> Vec<Capability> {
                     *id,
                     runtime.network_per_app.status,
                     runtime.network_per_app.reason.clone(),
+                )
+            } else if *id == NETWORK_SPEEDTEST_CAPABILITY {
+                Capability::new(
+                    *id,
+                    runtime.network_speedtest.status,
+                    runtime.network_speedtest.reason.clone(),
+                )
+            } else if *id == NETWORK_DEEPTEST_CAPABILITY {
+                Capability::new(
+                    *id,
+                    runtime.network_deeptest.status,
+                    runtime.network_deeptest.reason.clone(),
                 )
             } else if *id == USAGE_FOREGROUND_CAPABILITY {
                 Capability::new(
@@ -260,11 +290,15 @@ mod tests {
         assert_eq!(catalog[1].reason, "telemetry_warming_up");
         assert_eq!(catalog[2].status, CapabilityAvailability::Healthy);
         assert_eq!(catalog[3].status, CapabilityAvailability::Unsupported);
-        assert_eq!(catalog[4].status, CapabilityAvailability::Degraded);
-        assert_eq!(catalog[5].reason, "ssh_terminal_adapter_available");
-        assert_eq!(catalog[6].reason, "sftp_partial_file_contract");
-        assert_eq!(catalog[7].status, CapabilityAvailability::Healthy);
-        assert_eq!(catalog[8].reason, "smb_file_adapter_diagnostic_only");
-        assert_eq!(catalog[9].reason, "transfer_executor_not_wired");
+        assert_eq!(catalog[4].status, CapabilityAvailability::Unsupported);
+        assert_eq!(catalog[4].id, NETWORK_SPEEDTEST_CAPABILITY);
+        assert_eq!(catalog[5].id, NETWORK_DEEPTEST_CAPABILITY);
+        assert_eq!(catalog[5].reason, "deeptest_tools_not_detected");
+        assert_eq!(catalog[6].status, CapabilityAvailability::Degraded);
+        assert_eq!(catalog[7].reason, "ssh_terminal_adapter_available");
+        assert_eq!(catalog[8].reason, "sftp_partial_file_contract");
+        assert_eq!(catalog[9].status, CapabilityAvailability::Healthy);
+        assert_eq!(catalog[10].reason, "smb_file_adapter_diagnostic_only");
+        assert_eq!(catalog[11].reason, "transfer_executor_not_wired");
     }
 }

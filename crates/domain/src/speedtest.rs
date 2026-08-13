@@ -213,7 +213,7 @@ impl SpeedTestDeepCommand {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Iperf3Result {
     pub server: String,
@@ -292,7 +292,7 @@ impl LinssidLaunchResult {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum SpeedTestDeepOutput {
     Iperf3(Iperf3Result),

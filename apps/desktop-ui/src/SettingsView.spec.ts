@@ -1,16 +1,18 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getBackendCapabilityReport, getUsageSummary } from './backend'
+import { getBackendCapabilityReport, getSystemInfo, getUsageSummary } from './backend'
 import SettingsView from './views/SettingsView.vue'
 
 vi.mock('./backend', () => ({
   getBackendCapabilityReport: vi.fn(),
+  getSystemInfo: vi.fn(),
   getUsageSummary: vi.fn(),
 }))
 
 const mockedReport = vi.mocked(getBackendCapabilityReport)
 const mockedUsage = vi.mocked(getUsageSummary)
+const mockedSystemInfo = vi.mocked(getSystemInfo)
 
 const reportPayload = {
   kind: 'report' as const,
@@ -58,20 +60,73 @@ const usagePayload = {
   },
 }
 
+const systemInfoPayload = {
+  kind: 'systemInfo' as const,
+  report: {
+    schemaVersion: 1,
+    capturedAtUnixMs: 1786523610724,
+    toolVersion: 'fastfetch 2.67.0 (x86_64)',
+    status: 'healthy' as const,
+    reason: 'fastfetch_ok',
+    retryable: false,
+    sections: [
+      {
+        id: 'OS',
+        groups: [
+          {
+            title: null,
+            entries: [
+              { key: 'os_name', value: 'CachyOS Linux' },
+              { key: 'os_version', value: 'rolling · cachyos' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'CPU',
+        groups: [
+          {
+            title: null,
+            entries: [
+              { key: 'cpu_name', value: 'AMD Ryzen AI 7 H 450' },
+              { key: 'cores', value: '8 物理 / 16 逻辑' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'GPU',
+        groups: [
+          {
+            title: 'NVIDIA RTX 4070',
+            entries: [{ key: 'driver', value: 'nvidia · Discrete' }],
+          },
+        ],
+      },
+    ],
+  },
+}
+
+async function mountReady(): Promise<ReturnType<typeof mount>> {
+  mockedReport.mockResolvedValue(reportPayload)
+  mockedUsage.mockResolvedValue(usagePayload)
+  const wrapper = mount(SettingsView)
+  await flushPromises()
+  return wrapper
+}
+
 describe('SettingsView', () => {
   beforeEach(() => {
     mockedReport.mockReset()
     mockedUsage.mockReset()
+    mockedSystemInfo.mockReset()
   })
 
   it('groups the backend capability facts by system, remote and data', async () => {
-    mockedReport.mockResolvedValue(reportPayload)
-    mockedUsage.mockResolvedValue(usagePayload)
+    const wrapper = await mountReady()
 
-    const wrapper = mount(SettingsView)
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('设置')
+    expect(wrapper.text()).toContain('应用设置')
+    expect(wrapper.text()).toContain('系统信息')
     expect(wrapper.text()).toContain('appd 服务')
     expect(wrapper.text()).toContain('应用资源采集')
     expect(wrapper.text()).toContain('按应用流量')
@@ -107,11 +162,7 @@ describe('SettingsView', () => {
   })
 
   it('renders the usage scope facts from the backend summary', async () => {
-    mockedReport.mockResolvedValue(reportPayload)
-    mockedUsage.mockResolvedValue(usagePayload)
-
-    const wrapper = mount(SettingsView)
-    await flushPromises()
+    const wrapper = await mountReady()
 
     expect(wrapper.text()).toContain('统计始于')
     expect(wrapper.text()).toContain('2026-08-12')
@@ -123,11 +174,7 @@ describe('SettingsView', () => {
   })
 
   it('shows six not-implemented configuration entries', async () => {
-    mockedReport.mockResolvedValue(reportPayload)
-    mockedUsage.mockResolvedValue(usagePayload)
-
-    const wrapper = mount(SettingsView)
-    await flushPromises()
+    const wrapper = await mountReady()
 
     expect(wrapper.text()).toContain('采集周期')
     expect(wrapper.text()).toContain('数据保留期')
@@ -198,5 +245,105 @@ describe('SettingsView', () => {
 
     expect(wrapper.text()).toContain('future.feature.v1')
     expect(wrapper.text()).toContain('后端声明的运行能力')
+  })
+
+  it('loads system info lazily when the system tab is opened', async () => {
+    mockedSystemInfo.mockResolvedValue(systemInfoPayload)
+    const wrapper = await mountReady()
+
+    expect(mockedSystemInfo).not.toHaveBeenCalled()
+    expect(wrapper.find('#settings-panel-system').exists()).toBe(false)
+
+    await wrapper.find('[data-settings-tab="system"]').trigger('click')
+    await flushPromises()
+
+    expect(mockedSystemInfo).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('#settings-panel-system').exists()).toBe(true)
+  })
+
+  it('renders healthy fastfetch facts with aligned sections and device groups', async () => {
+    mockedSystemInfo.mockResolvedValue(systemInfoPayload)
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-settings-tab="system"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('fastfetch 2.67.0 (x86_64)')
+    expect(wrapper.text()).toContain('healthy')
+    expect(wrapper.text()).toContain('操作系统')
+    expect(wrapper.text()).toContain('CachyOS Linux')
+    expect(wrapper.text()).toContain('rolling · cachyos')
+    expect(wrapper.text()).toContain('处理器')
+    expect(wrapper.text()).toContain('8 物理 / 16 逻辑')
+    expect(wrapper.text()).toContain('NVIDIA RTX 4070')
+    expect(wrapper.text()).toContain('nvidia · Discrete')
+
+    const blocks = wrapper.findAll('.sys-block')
+    expect(blocks.length).toBe(3)
+    expect(wrapper.findAll('.sys-title').length).toBe(3)
+    expect(wrapper.find('.sys-pairs').exists()).toBe(true)
+  })
+
+  it('shows an unsupported band with reason when fastfetch is missing', async () => {
+    mockedSystemInfo.mockResolvedValue({
+      kind: 'systemInfo',
+      report: {
+        schemaVersion: 1,
+        capturedAtUnixMs: null,
+        toolVersion: null,
+        status: 'unsupported',
+        reason: 'fastfetch_not_found',
+        retryable: false,
+        sections: [],
+      },
+    })
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-settings-tab="system"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('系统信息不可用')
+    expect(wrapper.text()).toContain('unsupported')
+    expect(wrapper.text()).toContain('fastfetch_not_found')
+    expect(wrapper.find('.sys-pairs').exists()).toBe(false)
+  })
+
+  it('surfaces a system-info transport error and retries', async () => {
+    mockedSystemInfo.mockResolvedValueOnce({
+      kind: 'error',
+      error: { kind: 'transport', code: 'transport', reason: 'system_info_unreachable', retryable: true },
+    })
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-settings-tab="system"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('系统信息不可用')
+    expect(wrapper.text()).toContain('system_info_unreachable')
+
+    mockedSystemInfo.mockResolvedValue(systemInfoPayload)
+    await wrapper.find('.settings-retry').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('CachyOS Linux')
+    expect(wrapper.find('.settings-error').exists()).toBe(false)
+  })
+
+  it('keeps stale system facts visible when a refresh fails', async () => {
+    mockedSystemInfo.mockResolvedValue(systemInfoPayload)
+    const wrapper = await mountReady()
+    await wrapper.find('[data-settings-tab="system"]').trigger('click')
+    await flushPromises()
+
+    mockedSystemInfo.mockResolvedValueOnce({
+      kind: 'error',
+      error: { kind: 'daemon', code: 'daemon', reason: 'system_info_daemon_error', retryable: true },
+    })
+    await wrapper.find('.settings-refresh').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('系统信息刷新失败，正在显示上一次成功数据')
+    expect(wrapper.text()).toContain('system_info_daemon_error')
+    expect(wrapper.text()).toContain('CachyOS Linux')
   })
 })

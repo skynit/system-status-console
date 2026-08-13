@@ -1,16 +1,21 @@
 use localdesk_domain::{
-    CapabilityRuntime, CapabilityRuntimeState, TelemetryFreshness, TelemetrySnapshot,
-    TelemetryStatus,
+    CapabilityAvailability, CapabilityRuntime, CapabilityRuntimeState, TelemetryFreshness,
+    TelemetrySnapshot, TelemetryStatus,
 };
 use localdesk_ipc::{
     CapabilityProvider, NetworkSnapshotProvider, NetworkSnapshotProviderFuture, NotesProvider,
     NotesProviderFuture, RemoteCapabilitiesProvider, RemoteCapabilitiesProviderFuture,
     RemoteProfileProvider, RemoteProfileProviderFuture, RemoteSessionProvider,
     RemoteSessionProviderFuture, SecretCommandProvider, SecretCommandProviderFuture, ServerConfig,
-    ServerError, SnapshotProvider, SnapshotProviderError, SnapshotProviderFuture, TerminalProvider,
-    TerminalProviderFuture, TransferLocalHandleProvider, TransferLocalHandleProviderFuture,
-    TransferProvider, TransferProviderFuture, UsageSummaryProvider, UsageSummaryProviderFuture,
-    serve,
+    ServerError, SnapshotProvider, SnapshotProviderError, SnapshotProviderFuture,
+    SpeedTestCancelProvider, SpeedTestCancelProviderFuture, SpeedTestDeepProvider,
+    SpeedTestDeepProviderFuture, SpeedTestProvider, SpeedTestProviderFuture, SystemInfoProvider,
+    SystemInfoProviderFuture, SystemInfoReport, TerminalProvider, TerminalProviderFuture,
+    TransferLocalHandleProvider, TransferLocalHandleProviderFuture, TransferProvider,
+    TransferProviderFuture, UsageSummaryProvider, UsageSummaryProviderFuture, serve,
+};
+use localdesk_systeminfo::{
+    SYSTEM_INFO_SCHEMA_VERSION, SystemInfoCollector, SystemInfoStatus,
 };
 use localdesk_telemetry::TelemetryManagerHandle;
 use std::sync::Arc;
@@ -19,6 +24,7 @@ use tokio::{net::UnixListener, sync::watch};
 use crate::network::NetworkHandle;
 use crate::notes::NotesHandle;
 use crate::remote::RemoteRuntime;
+use crate::speedtest::SpeedTestHandle;
 use crate::usage::UsageHandle;
 
 pub const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -29,6 +35,7 @@ pub fn server_config(
     usage_handle: UsageHandle,
     notes_handle: NotesHandle,
     remote_runtime: RemoteRuntime,
+    speedtest_handle: SpeedTestHandle,
 ) -> ServerConfig {
     remote_runtime.enable_transfer_provider();
     let capability_telemetry = telemetry_handle.clone();
@@ -36,6 +43,7 @@ pub fn server_config(
     let capability_usage = usage_handle.clone();
     let capability_remote = remote_runtime.clone();
     let capability_notes = notes_handle.clone();
+    let capability_speedtest = speedtest_handle.clone();
     let capability_provider: CapabilityProvider = Arc::new(move || {
         let telemetry = capability_state(capability_telemetry.snapshot());
         let (network_system, network_per_app) = capability_network.capability_states();
@@ -47,9 +55,11 @@ pub fn server_config(
             capability_usage.capability_state(),
         );
         let (ssh, sftp, ftp, smb, transfers) = capability_remote.capability_states();
+        let (speedtest, deeptest) = capability_speedtest.capability_states();
         runtime
             .with_remote(ssh, sftp, ftp, smb, transfers)
             .with_notes(capability_notes.capability_state())
+            .with_speedtest(speedtest, deeptest)
     });
 
     let snapshot_provider: SnapshotProvider = Arc::new(move || {
@@ -85,6 +95,25 @@ pub fn server_config(
     let remote_capabilities_provider: RemoteCapabilitiesProvider = Arc::new(move || {
         let catalog = remote_runtime.catalog();
         let future: RemoteCapabilitiesProviderFuture = Box::pin(async move { Ok(catalog) });
+        future
+    });
+    let system_info_provider: SystemInfoProvider = Arc::new(|| {
+        let future: SystemInfoProviderFuture = Box::pin(async move {
+            let outcome = SystemInfoCollector::default().collect().await;
+            Ok(SystemInfoReport {
+                schema_version: SYSTEM_INFO_SCHEMA_VERSION,
+                captured_at_unix_ms: outcome.captured_at_unix_ms,
+                tool_version: outcome.tool_version,
+                status: match outcome.status {
+                    SystemInfoStatus::Healthy => CapabilityAvailability::Healthy,
+                    SystemInfoStatus::Degraded => CapabilityAvailability::Degraded,
+                    SystemInfoStatus::Unsupported => CapabilityAvailability::Unsupported,
+                },
+                reason: outcome.reason,
+                retryable: outcome.retryable,
+                sections: outcome.sections,
+            })
+        });
         future
     });
     let remote_profile_provider: RemoteProfileProvider = Arc::new(move |command| {
@@ -154,11 +183,41 @@ pub fn server_config(
         future
     });
 
+    let speedtest_basic_handle = speedtest_handle.clone();
+    let speedtest_provider: SpeedTestProvider = Arc::new(move || {
+        let handle = speedtest_basic_handle.clone();
+        let future: SpeedTestProviderFuture = Box::pin(async move {
+            handle
+                .start_basic()
+                .map_err(|error| SnapshotProviderError::new(error.code, error.reason, error.retryable))
+        });
+        future
+    });
+    let speedtest_cancel_handle = speedtest_handle.clone();
+    let speedtest_cancel_provider: SpeedTestCancelProvider = Arc::new(move || {
+        let handle = speedtest_cancel_handle.clone();
+        let future: SpeedTestCancelProviderFuture = Box::pin(async move {
+            Ok(handle.cancel())
+        });
+        future
+    });
+    let speedtest_deep_handle = speedtest_handle.clone();
+    let speedtest_deep_provider: SpeedTestDeepProvider = Arc::new(move |command| {
+        let handle = speedtest_deep_handle.clone();
+        let future: SpeedTestDeepProviderFuture = Box::pin(async move {
+            handle.deep_command(command).await.map_err(|error| {
+                SnapshotProviderError::new(error.code, error.reason, error.retryable)
+            })
+        });
+        future
+    });
+
     ServerConfig::new(DAEMON_VERSION, capability_provider)
         .with_snapshot_provider(snapshot_provider)
         .with_network_snapshot_provider(network_snapshot_provider)
         .with_usage_summary_provider(usage_summary_provider)
         .with_remote_capabilities_provider(remote_capabilities_provider)
+        .with_system_info_provider(system_info_provider)
         .with_remote_profile_provider(remote_profile_provider)
         .with_secret_command_provider(secret_command_provider)
         .with_remote_session_provider(remote_session_provider)
@@ -166,6 +225,9 @@ pub fn server_config(
         .with_transfer_provider(transfer_provider)
         .with_transfer_local_handle_provider(transfer_local_handle_provider)
         .with_notes_provider(notes_provider)
+        .with_speedtest_provider(speedtest_provider)
+        .with_speedtest_cancel_provider(speedtest_cancel_provider)
+        .with_speedtest_deep_provider(speedtest_deep_provider)
 }
 
 pub async fn serve_appd(
@@ -175,6 +237,7 @@ pub async fn serve_appd(
     usage_handle: UsageHandle,
     notes_handle: NotesHandle,
     remote_runtime: RemoteRuntime,
+    speedtest_handle: SpeedTestHandle,
     shutdown: watch::Receiver<bool>,
 ) -> Result<(), ServerError> {
     serve(
@@ -185,6 +248,7 @@ pub async fn serve_appd(
             usage_handle,
             notes_handle,
             remote_runtime,
+            speedtest_handle,
         ),
         shutdown,
     )

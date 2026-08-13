@@ -173,10 +173,10 @@ async fn slow_partial_request_does_not_block_bounded_shutdown() {
 }
 
 #[tokio::test]
-async fn legacy_protocol_version_eleven_is_rejected_without_a_compatibility_branch() {
+async fn legacy_protocol_version_twelve_is_rejected_without_a_compatibility_branch() {
     let (_directory, path, shutdown_tx, server) = spawn_server().await;
     let mut request = RequestEnvelope::appd_health("test-client");
-    request.protocol_version = 11;
+    request.protocol_version = 12;
 
     let error = request_health(&path, request)
         .await
@@ -184,7 +184,7 @@ async fn legacy_protocol_version_eleven_is_rejected_without_a_compatibility_bran
     match error {
         ClientError::Daemon(error) => {
             assert_eq!(error.code, "unsupported_protocol");
-            assert_eq!(error.reason, "wire_protocol_version_must_be_12");
+            assert_eq!(error.reason, "wire_protocol_version_must_be_13");
             assert!(!error.retryable);
         }
         other => panic!("expected daemon error, got {other:?}"),

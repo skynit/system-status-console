@@ -2,16 +2,17 @@ mod capability;
 mod health;
 mod network;
 mod notes;
+mod speedtest;
 mod telemetry;
 mod usage;
 
 pub use capability::{
     APPD_HEALTH_CAPABILITY, Capability, CapabilityAvailability, CapabilityRuntime,
-    CapabilityRuntimeState, KNOWN_CAPABILITIES, NETWORK_PER_APP_CAPABILITY,
-    NETWORK_SYSTEM_CAPABILITY, NOT_IMPLEMENTED_REASON, NOTES_CAPABILITY, REMOTE_FTP_CAPABILITY,
-    REMOTE_SFTP_CAPABILITY, REMOTE_SMB_CAPABILITY, REMOTE_SSH_CAPABILITY,
-    TELEMETRY_SNAPSHOT_CAPABILITY, TRANSFERS_CAPABILITY, USAGE_FOREGROUND_CAPABILITY,
-    capability_catalog,
+    CapabilityRuntimeState, KNOWN_CAPABILITIES, NETWORK_DEEPTEST_CAPABILITY,
+    NETWORK_PER_APP_CAPABILITY, NETWORK_SPEEDTEST_CAPABILITY, NETWORK_SYSTEM_CAPABILITY,
+    NOT_IMPLEMENTED_REASON, NOTES_CAPABILITY, REMOTE_FTP_CAPABILITY, REMOTE_SFTP_CAPABILITY,
+    REMOTE_SMB_CAPABILITY, REMOTE_SSH_CAPABILITY, TELEMETRY_SNAPSHOT_CAPABILITY,
+    TRANSFERS_CAPABILITY, USAGE_FOREGROUND_CAPABILITY, capability_catalog,
 };
 pub use health::{HealthState, RequestHealth, aggregate_request_health, health_reason};
 pub use network::{
@@ -29,6 +30,14 @@ pub use notes::{
     NoteDeletedFilter, NoteDocument, NoteDraftMeta, NoteExport, NoteExportFormat,
     NoteMutationResult, NotePage, NoteQuery, NoteSort, NoteStatus, NoteSummary, NoteWriteIntent,
     NotesCommand, NotesOutput, validate_sha256,
+};
+pub use speedtest::{
+    SPEEDTEST_LATENCY_PROBES_PER_TARGET, SPEEDTEST_MAX_BANDWIDTH_MEASUREMENTS,
+    SPEEDTEST_MAX_LATENCY_TARGETS, SPEEDTEST_MAX_MIRRORS, SPEEDTEST_MAX_REASON_BYTES,
+    SPEEDTEST_SCHEMA_VERSION, BandwidthKind, BandwidthMeasurement, Iperf3Direction, Iperf3Result,
+    IpPurityResult, LatencyProbe, LatencyTargetResult, LinssidLaunchResult, SpeedTestBasicEnd,
+    SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestStage,
+    SpeedTestStageData, WifiNetwork, WifiScanResult,
 };
 pub use telemetry::{
     ApplicationSample, GroupingResolution, IssueCount, MetricState, MetricValue, SystemFdSample,
@@ -69,7 +78,10 @@ mod tests {
         assert_eq!(capabilities[1].status, CapabilityAvailability::Degraded);
         assert_eq!(capabilities[2].status, CapabilityAvailability::Healthy);
         assert_eq!(capabilities[3].status, CapabilityAvailability::Unsupported);
-        assert_eq!(capabilities[4].status, CapabilityAvailability::Degraded);
+        assert_eq!(capabilities[4].id, NETWORK_SPEEDTEST_CAPABILITY);
+        assert_eq!(capabilities[4].status, CapabilityAvailability::Unsupported);
+        assert_eq!(capabilities[5].id, NETWORK_DEEPTEST_CAPABILITY);
+        assert_eq!(capabilities[6].status, CapabilityAvailability::Degraded);
     }
 
     #[test]

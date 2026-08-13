@@ -4,16 +4,18 @@ use localdesk_domain::{
     NOTE_CONTENT_CHUNK_BYTES, NOTES_CAPABILITY, NetworkSnapshot, NoteDocument, NoteDraftMeta,
     NoteExport, NoteExportFormat, NoteMutationResult, NotePage, NoteQuery, NoteWriteIntent,
     NotesCommand, NotesOutput, REMOTE_FTP_CAPABILITY, REMOTE_SFTP_CAPABILITY,
-    REMOTE_SMB_CAPABILITY, REMOTE_SSH_CAPABILITY, TELEMETRY_SNAPSHOT_CAPABILITY,
+    REMOTE_SMB_CAPABILITY, REMOTE_SSH_CAPABILITY, SpeedTestBasicEnd, SpeedTestCancelResult,
+    SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestStageData, TELEMETRY_SNAPSHOT_CAPABILITY,
     TRANSFERS_CAPABILITY, TelemetrySnapshot, USAGE_FOREGROUND_CAPABILITY, UsageSummary,
     UsageSummaryQuery,
 };
 use localdesk_ipc::{
-    ClientError, HealthReport, MAX_FRAME_PAYLOAD_BYTES, RequestEnvelope, TerminalStreamEvent,
-    TransferLocalHandleBind, request_health, request_network_snapshot, request_notes,
-    request_remote_capabilities, request_remote_profile, request_remote_session, request_secret,
-    request_telemetry_snapshot, request_terminal, request_terminal_stream, request_transfer,
-    request_transfer_local_handle, request_usage_summary,
+    ClientError, HealthReport, MAX_FRAME_PAYLOAD_BYTES, RequestEnvelope, SystemInfoReport,
+    TerminalStreamEvent, TransferLocalHandleBind, request_health, request_network_snapshot,
+    request_notes, request_remote_capabilities, request_remote_profile, request_remote_session,
+    request_secret, request_speedtest_basic, request_speedtest_cancel, request_speedtest_deep,
+    request_system_info, request_telemetry_snapshot, request_terminal, request_terminal_stream,
+    request_transfer, request_transfer_local_handle, request_usage_summary,
 };
 use localdesk_remote_core::{
     RemoteAdapterCatalog, RemoteProfileCommand, RemoteProfileResult, RemoteSessionCommand,
@@ -134,6 +136,50 @@ pub async fn network_snapshot() -> Result<NetworkSnapshot, BridgeError> {
 pub async fn usage_summary(query: UsageSummaryQuery) -> Result<UsageSummary, BridgeError> {
     let path = runtime_socket_path().map_err(|error| error.into_bridge_error())?;
     request_usage_summary(&path, RequestEnvelope::usage_summary(query))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn speedtest_basic(
+    on_stage: Channel<SpeedTestStageData>,
+) -> Result<SpeedTestBasicEnd, BridgeError> {
+    let path = runtime_socket_path().map_err(|error| error.into_bridge_error())?;
+    request_speedtest_basic(
+        &path,
+        RequestEnvelope::speedtest_basic(),
+        move |stage| {
+            on_stage.send(stage).map_err(|_| {
+                ClientError::Protocol(localdesk_ipc::ProtocolError::UnexpectedBody)
+            })
+        },
+    )
+    .await
+    .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn speedtest_cancel() -> Result<SpeedTestCancelResult, BridgeError> {
+    let path = runtime_socket_path().map_err(|error| error.into_bridge_error())?;
+    request_speedtest_cancel(&path, RequestEnvelope::speedtest_cancel())
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn speedtest_deep(
+    command: SpeedTestDeepCommand,
+) -> Result<SpeedTestDeepOutput, BridgeError> {
+    let path = runtime_socket_path().map_err(|error| error.into_bridge_error())?;
+    request_speedtest_deep(&path, RequestEnvelope::speedtest_deep(command))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn system_info() -> Result<SystemInfoReport, BridgeError> {
+    let path = runtime_socket_path().map_err(|error| error.into_bridge_error())?;
+    request_system_info(&path, RequestEnvelope::system_info())
         .await
         .map_err(Into::into)
 }

@@ -1,5 +1,8 @@
 use crate::{
-    client::{HEALTH_TOTAL_DEADLINE, REMOTE_SESSION_TOTAL_DEADLINE, SNAPSHOT_TOTAL_DEADLINE},
+    client::{
+        HEALTH_TOTAL_DEADLINE, REMOTE_SESSION_TOTAL_DEADLINE, SNAPSHOT_TOTAL_DEADLINE,
+        SPEEDTEST_TOTAL_DEADLINE, SYSTEM_INFO_TOTAL_DEADLINE,
+    },
     frame::{FrameError, MAX_FRAME_PAYLOAD_BYTES, WireBudget, read_json, write_frame},
     message::{
         ApplicationChunk, DaemonError, HealthReport, HealthRequest, MAX_APPLICATION_RECORDS,
@@ -8,10 +11,11 @@ use crate::{
         NetworkInterfaceChunk, NetworkSnapshotEnd, NetworkSnapshotStart, NoteSummaryChunk,
         NotesContentChunk, NotesContentEnd, NotesContentKind, NotesContentStart, NotesPageEnd,
         NotesPageStart, RequestBody, RequestEnvelope, ResponseBody, ResponseEnvelope, SnapshotEnd,
-        SnapshotStart, TerminalStreamData, TerminalStreamEnd, TerminalStreamStart,
+        SnapshotStart, SpeedTestStreamEvent, SystemInfoReport, TerminalStreamData,
+        TerminalStreamEnd, TerminalStreamStart,
         TerminalStreamStatus, TransferLocalHandleBind, TransferPageEnd, TransferPageStart,
         TransferTaskChunk, UsageApplicationChunk, UsageSummaryEnd, UsageSummaryStart,
-        WIRE_PROTOCOL_VERSION,
+        WIRE_PROTOCOL_VERSION, speedtest_deep_deadline,
     },
     peer::{PeerError, verify_peer_uid},
 };
@@ -20,9 +24,10 @@ use localdesk_domain::{
     Capability, CapabilityAvailability, CapabilityRuntime, HealthState, MAX_NETWORK_APPLICATIONS,
     MAX_NETWORK_INTERFACES, MAX_USAGE_APPLICATIONS, NETWORK_SCHEMA_VERSION,
     NOTE_CONTENT_CHUNK_BYTES, NOTES_SCHEMA_VERSION, NetworkSnapshot, NoteDocument, NoteExport,
-    NotePage, NotesCommand, NotesOutput, RequestHealth, TELEMETRY_SCHEMA_VERSION,
-    TelemetrySnapshot, USAGE_SCHEMA_VERSION, UsageSummary, UsageSummaryQuery,
-    aggregate_request_health, capability_catalog,
+    NotePage, NotesCommand, NotesOutput, RequestHealth, SpeedTestCancelResult,
+    SpeedTestDeepCommand, SpeedTestDeepOutput, TELEMETRY_SCHEMA_VERSION, TelemetrySnapshot,
+    USAGE_SCHEMA_VERSION, UsageSummary,
+    UsageSummaryQuery, aggregate_request_health, capability_catalog,
 };
 use localdesk_remote_core::{
     RemoteAdapterCatalog, RemoteProfileCommand, RemoteProfileResult, RemoteSessionCommand,
@@ -38,7 +43,7 @@ use std::{collections::HashSet, future::Future, io, pin::Pin, sync::Arc, time::D
 use thiserror::Error;
 use tokio::{
     net::{UnixListener, UnixStream},
-    sync::{Semaphore, watch},
+    sync::{Semaphore, mpsc, watch},
     task::JoinSet,
     time::{Instant, sleep, timeout, timeout_at},
 };
@@ -101,6 +106,20 @@ pub type TransferLocalHandleProviderFuture = Pin<
 >;
 pub type TransferLocalHandleProvider =
     Arc<dyn Fn(TransferLocalHandleBind) -> TransferLocalHandleProviderFuture + Send + Sync>;
+pub type SpeedTestProviderFuture =
+    Pin<Box<dyn Future<Output = Result<mpsc::Receiver<SpeedTestStreamEvent>, SnapshotProviderError>> + Send + 'static>>;
+pub type SpeedTestProvider = Arc<dyn Fn() -> SpeedTestProviderFuture + Send + Sync>;
+pub type SpeedTestCancelProviderFuture =
+    Pin<Box<dyn Future<Output = Result<SpeedTestCancelResult, SnapshotProviderError>> + Send + 'static>>;
+pub type SpeedTestCancelProvider = Arc<dyn Fn() -> SpeedTestCancelProviderFuture + Send + Sync>;
+pub type SpeedTestDeepProviderFuture =
+    Pin<Box<dyn Future<Output = Result<SpeedTestDeepOutput, SnapshotProviderError>> + Send + 'static>>;
+pub type SpeedTestDeepProvider =
+    Arc<dyn Fn(SpeedTestDeepCommand) -> SpeedTestDeepProviderFuture + Send + Sync>;
+pub type SystemInfoProviderFuture = Pin<
+    Box<dyn Future<Output = Result<SystemInfoReport, SnapshotProviderError>> + Send + 'static>,
+>;
+pub type SystemInfoProvider = Arc<dyn Fn() -> SystemInfoProviderFuture + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -110,6 +129,7 @@ pub struct ServerConfig {
     network_snapshot_provider: Option<NetworkSnapshotProvider>,
     usage_summary_provider: Option<UsageSummaryProvider>,
     remote_capabilities_provider: Option<RemoteCapabilitiesProvider>,
+    system_info_provider: Option<SystemInfoProvider>,
     remote_profile_provider: Option<RemoteProfileProvider>,
     secret_command_provider: Option<SecretCommandProvider>,
     remote_session_provider: Option<RemoteSessionProvider>,
@@ -117,7 +137,11 @@ pub struct ServerConfig {
     terminal_provider: Option<TerminalProvider>,
     transfer_provider: Option<TransferProvider>,
     transfer_local_handle_provider: Option<TransferLocalHandleProvider>,
+    speedtest_provider: Option<SpeedTestProvider>,
+    speedtest_cancel_provider: Option<SpeedTestCancelProvider>,
+    speedtest_deep_provider: Option<SpeedTestDeepProvider>,
     notes_export_permit: Arc<Semaphore>,
+    speedtest_permits: Arc<Semaphore>,
 }
 
 impl ServerConfig {
@@ -129,6 +153,7 @@ impl ServerConfig {
             network_snapshot_provider: None,
             usage_summary_provider: None,
             remote_capabilities_provider: None,
+            system_info_provider: None,
             remote_profile_provider: None,
             secret_command_provider: None,
             remote_session_provider: None,
@@ -136,7 +161,11 @@ impl ServerConfig {
             terminal_provider: None,
             transfer_provider: None,
             transfer_local_handle_provider: None,
+            speedtest_provider: None,
+            speedtest_cancel_provider: None,
+            speedtest_deep_provider: None,
             notes_export_permit: Arc::new(Semaphore::new(1)),
+            speedtest_permits: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -160,6 +189,11 @@ impl ServerConfig {
         provider: RemoteCapabilitiesProvider,
     ) -> Self {
         self.remote_capabilities_provider = Some(provider);
+        self
+    }
+
+    pub fn with_system_info_provider(mut self, provider: SystemInfoProvider) -> Self {
+        self.system_info_provider = Some(provider);
         self
     }
 
@@ -198,6 +232,21 @@ impl ServerConfig {
         provider: TransferLocalHandleProvider,
     ) -> Self {
         self.transfer_local_handle_provider = Some(provider);
+        self
+    }
+
+    pub fn with_speedtest_provider(mut self, provider: SpeedTestProvider) -> Self {
+        self.speedtest_provider = Some(provider);
+        self
+    }
+
+    pub fn with_speedtest_cancel_provider(mut self, provider: SpeedTestCancelProvider) -> Self {
+        self.speedtest_cancel_provider = Some(provider);
+        self
+    }
+
+    pub fn with_speedtest_deep_provider(mut self, provider: SpeedTestDeepProvider) -> Self {
+        self.speedtest_deep_provider = Some(provider);
         self
     }
 }
@@ -329,7 +378,7 @@ async fn handle_connection_inner(
             request_deadline,
             DaemonError::new(
                 "unsupported_protocol",
-                "wire_protocol_version_must_be_12",
+                "wire_protocol_version_must_be_13",
                 false,
             ),
         )
@@ -551,6 +600,52 @@ async fn handle_connection_inner(
                 sequence: 0,
                 snapshot_id: None,
                 body: ResponseBody::RemoteCapabilities(catalog),
+            };
+            write_response(&mut stream, &response, deadline).await
+        }
+        RequestBody::SystemInfo(_) => {
+            let deadline = accepted_at + SYSTEM_INFO_TOTAL_DEADLINE;
+            let Some(provider) = config.system_info_provider else {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new(
+                        "system_info_provider_unavailable",
+                        "system_info_provider_unavailable",
+                        true,
+                    ),
+                )
+                .await;
+            };
+            let report = match timeout_at(deadline, provider()).await {
+                Ok(Ok(report)) => report,
+                Ok(Err(error)) => {
+                    return write_terminal_error(
+                        &mut stream,
+                        request.request_id,
+                        deadline,
+                        DaemonError::new(error.code, error.reason, error.retryable),
+                    )
+                    .await;
+                }
+                Err(_) => return Err(ServerError::Connection(FrameError::DeadlineExceeded)),
+            };
+            if !report.validate() {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new("system_info_invalid", "system_info_schema_version_mismatch", false),
+                )
+                .await;
+            }
+            let response = ResponseEnvelope {
+                protocol_version: WIRE_PROTOCOL_VERSION,
+                request_id: request.request_id,
+                sequence: 0,
+                snapshot_id: None,
+                body: ResponseBody::SystemInfo(report),
             };
             write_response(&mut stream, &response, deadline).await
         }
@@ -953,6 +1048,166 @@ async fn handle_connection_inner(
                     sequence: 0,
                     snapshot_id: None,
                     body: ResponseBody::TransferLocalHandle(grant),
+                },
+                deadline,
+            )
+            .await
+        }
+        RequestBody::SpeedTestBasic(_) => {
+            let deadline = accepted_at + SPEEDTEST_TOTAL_DEADLINE;
+            let Ok(_speedtest_permit) = config.speedtest_permits.clone().try_acquire_owned() else {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new("speedtest_busy", "speedtest_already_running", true),
+                )
+                .await;
+            };
+            let Some(provider) = config.speedtest_provider else {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new(
+                        "speedtest_provider_unavailable",
+                        "speedtest_provider_unavailable",
+                        true,
+                    ),
+                )
+                .await;
+            };
+            let mut receiver = match timeout_at(deadline, provider()).await {
+                Ok(Ok(receiver)) => receiver,
+                Ok(Err(error)) => {
+                    return write_terminal_error(
+                        &mut stream,
+                        request.request_id,
+                        deadline,
+                        DaemonError::new(error.code, error.reason, error.retryable),
+                    )
+                    .await;
+                }
+                Err(_) => return Err(ServerError::Connection(FrameError::DeadlineExceeded)),
+            };
+            serve_speedtest_stream(&mut stream, &mut receiver, request.request_id, deadline).await
+        }
+        RequestBody::SpeedTestCancel(_) => {
+            let deadline = accepted_at + SNAPSHOT_TOTAL_DEADLINE;
+            let Some(provider) = config.speedtest_cancel_provider else {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new(
+                        "speedtest_cancel_provider_unavailable",
+                        "speedtest_cancel_provider_unavailable",
+                        true,
+                    ),
+                )
+                .await;
+            };
+            let result = match timeout_at(deadline, provider()).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => {
+                    return write_terminal_error(
+                        &mut stream,
+                        request.request_id,
+                        deadline,
+                        DaemonError::new(error.code, error.reason, error.retryable),
+                    )
+                    .await;
+                }
+                Err(_) => return Err(ServerError::Connection(FrameError::DeadlineExceeded)),
+            };
+            if !result.validate() {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new(
+                        "speedtest_cancel_result_invalid",
+                        "speedtest_cancel_result_invalid",
+                        false,
+                    ),
+                )
+                .await;
+            }
+            write_response(
+                &mut stream,
+                &ResponseEnvelope {
+                    protocol_version: WIRE_PROTOCOL_VERSION,
+                    request_id: request.request_id,
+                    sequence: 0,
+                    snapshot_id: None,
+                    body: ResponseBody::SpeedTestCancelled(result),
+                },
+                deadline,
+            )
+            .await
+        }
+        RequestBody::SpeedTestDeep(command) => {
+            let deadline = accepted_at + speedtest_deep_deadline(&command);
+            if command.validate().is_err() {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new(
+                        "invalid_request",
+                        "speedtest_deep_command_invalid",
+                        false,
+                    ),
+                )
+                .await;
+            }
+            let Some(provider) = config.speedtest_deep_provider else {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new(
+                        "speedtest_deep_provider_unavailable",
+                        "speedtest_deep_provider_unavailable",
+                        true,
+                    ),
+                )
+                .await;
+            };
+            let output = match timeout_at(deadline, provider(command.clone())).await {
+                Ok(Ok(output)) => output,
+                Ok(Err(error)) => {
+                    return write_terminal_error(
+                        &mut stream,
+                        request.request_id,
+                        deadline,
+                        DaemonError::new(error.code, error.reason, error.retryable),
+                    )
+                    .await;
+                }
+                Err(_) => return Err(ServerError::Connection(FrameError::DeadlineExceeded)),
+            };
+            if !output.validate_for(&command) {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new(
+                        "speedtest_deep_result_invalid",
+                        "speedtest_deep_result_did_not_match_command",
+                        false,
+                    ),
+                )
+                .await;
+            }
+            write_response(
+                &mut stream,
+                &ResponseEnvelope {
+                    protocol_version: WIRE_PROTOCOL_VERSION,
+                    request_id: request.request_id,
+                    sequence: 0,
+                    snapshot_id: None,
+                    body: ResponseBody::SpeedTestDeep(Box::new(output)),
                 },
                 deadline,
             )
@@ -2157,6 +2412,53 @@ async fn write_response(
     let encoded = serde_json::to_vec(response).map_err(FrameError::InvalidJson)?;
     write_frame(stream, &encoded, deadline).await?;
     Ok(())
+}
+
+async fn serve_speedtest_stream(
+    stream: &mut UnixStream,
+    receiver: &mut mpsc::Receiver<SpeedTestStreamEvent>,
+    request_id: Uuid,
+    deadline: Instant,
+) -> Result<(), ServerError> {
+    let mut sequence = 0_u32;
+    loop {
+        let event = match timeout_at(deadline, receiver.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => return Err(ServerError::Protocol),
+            Err(_) => return Err(ServerError::Connection(FrameError::DeadlineExceeded)),
+        };
+        let ended = matches!(event, SpeedTestStreamEvent::End(_));
+        let body = match event {
+            SpeedTestStreamEvent::Stage(stage) => {
+                if !stage.validate() {
+                    return Err(ServerError::Protocol);
+                }
+                ResponseBody::SpeedTestStage(stage)
+            }
+            SpeedTestStreamEvent::End(end) => {
+                if !end.validate() {
+                    return Err(ServerError::Protocol);
+                }
+                ResponseBody::SpeedTestBasicEnd(end)
+            }
+        };
+        write_response(
+            stream,
+            &ResponseEnvelope {
+                protocol_version: WIRE_PROTOCOL_VERSION,
+                request_id,
+                sequence,
+                snapshot_id: None,
+                body,
+            },
+            deadline,
+        )
+        .await?;
+        sequence = sequence.checked_add(1).ok_or(ServerError::Protocol)?;
+        if ended {
+            return Ok(());
+        }
+    }
 }
 
 async fn serve_terminal_stream(

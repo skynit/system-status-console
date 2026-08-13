@@ -23,7 +23,7 @@ const activeNavigation = computed(() => (
   navigation.find((item) => item.name === route.name) ?? navigation[0]
 ))
 const dashboardActive = computed(() => route.name === 'dashboard')
-const operationsWorkspaceActive = computed(() => !dashboardActive.value && route.name !== 'settings')
+const operationsWorkspaceActive = computed(() => !dashboardActive.value)
 
 watch(() => route.fullPath, () => {
   mobileNavOpen.value = false

@@ -12,7 +12,11 @@ mod service;
 #[allow(dead_code)]
 #[path = "../src/usage.rs"]
 mod usage;
+#[allow(dead_code)]
+#[path = "../src/speedtest.rs"]
+mod speedtest;
 
+use speedtest::SpeedTestHandle;
 use localdesk_domain::{
     CapabilityAvailability, NOTES_CAPABILITY, NoteDeletedFilter, NoteDocument, NoteDraftMeta,
     NoteExportFormat, NoteMutationResult, NotePage, NoteQuery, NoteSort, NoteStatus,
@@ -73,7 +77,8 @@ async fn notes_socket_persists_cas_data_and_drains_without_accepting_new_uploads
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         notes_handle.clone(),
         RemoteRuntime::unavailable_for_test("remote_fixture_unavailable"),
-        ipc_shutdown_rx,
+        SpeedTestHandle::new(),
+                ipc_shutdown_rx,
     ));
 
     let health = request_health(
@@ -310,7 +315,8 @@ async fn notes_socket_persists_cas_data_and_drains_without_accepting_new_uploads
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         second_handle,
         RemoteRuntime::unavailable_for_test("remote_fixture_unavailable"),
-        second_ipc_shutdown_rx,
+        SpeedTestHandle::new(),
+                second_ipc_shutdown_rx,
     ));
     let reopened = request_notes(
         &second_socket,

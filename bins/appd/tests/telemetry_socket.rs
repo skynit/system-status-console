@@ -12,7 +12,11 @@ mod service;
 #[allow(dead_code)]
 #[path = "../src/usage.rs"]
 mod usage;
+#[allow(dead_code)]
+#[path = "../src/speedtest.rs"]
+mod speedtest;
 
+use speedtest::SpeedTestHandle;
 use localdesk_domain::{HealthState, TelemetryFreshness, TelemetryStatus};
 use localdesk_ipc::{RequestEnvelope, request_health, request_telemetry_snapshot};
 use localdesk_network::NetworkMonitor;
@@ -41,7 +45,8 @@ async fn collector_unavailable_keeps_health_response_and_reports_snapshot_reason
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         notes::NotesHandle::unavailable_for_test(),
         RemoteRuntime::unavailable_for_test("remote_fixture_unavailable"),
-        shutdown_rx,
+        SpeedTestHandle::new(),
+                shutdown_rx,
     ));
 
     let health_request =

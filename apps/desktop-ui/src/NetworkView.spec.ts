@@ -1,15 +1,34 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getNetworkSnapshot } from './backend'
+import {
+  cancelSpeedTest,
+  getBackendCapabilityReport,
+  getNetworkSnapshot,
+  runSpeedTestBasic,
+  runSpeedTestDeep,
+} from './backend'
 import NetworkView from './views/NetworkView.vue'
-import type { NetworkInterfaceSample, NetworkSnapshot } from './types'
+import type {
+  BackendCapability,
+  NetworkInterfaceSample,
+  NetworkSnapshot,
+  SpeedTestBasicEnd,
+} from './types'
 
 vi.mock('./backend', () => ({
   getNetworkSnapshot: vi.fn(),
+  getBackendCapabilityReport: vi.fn(),
+  runSpeedTestBasic: vi.fn(),
+  cancelSpeedTest: vi.fn(),
+  runSpeedTestDeep: vi.fn(),
 }))
 
 const mockedNetwork = vi.mocked(getNetworkSnapshot)
+const mockedCapabilities = vi.mocked(getBackendCapabilityReport)
+const mockedBasic = vi.mocked(runSpeedTestBasic)
+const mockedCancel = vi.mocked(cancelSpeedTest)
+const mockedDeep = vi.mocked(runSpeedTestDeep)
 
 function rate(state: 'known' | 'warming_up' = 'known') {
   return {
@@ -135,6 +154,7 @@ describe('NetworkView', () => {
 
   it('moves selection and focus across network tabs with arrow, Home, and End keys', async () => {
     mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
     const wrapper = mount(NetworkView, { attachTo: document.body })
     await flushPromises()
 
@@ -150,7 +170,7 @@ describe('NetworkView', () => {
 
     await wrapper.get('[data-network-tab="interfaces"]').trigger('keydown', { key: 'End' })
     await new Promise((resolve) => requestAnimationFrame(resolve))
-    expect(document.activeElement).toBe(wrapper.get('[data-network-tab="applications"]').element)
+    expect(document.activeElement).toBe(wrapper.get('[data-network-tab="speedtest"]').element)
     wrapper.unmount()
   })
 
@@ -214,6 +234,299 @@ describe('NetworkView', () => {
     expect(wrapper.text()).toContain('刷新失败，正在显示上一次成功数据')
     expect(wrapper.get('.network-refresh-error').text()).toContain('appd_socket_unavailable')
     expect(wrapper.find('.network-state.is-error').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+function capability(id: string, status: BackendCapability['status'], reason: string): BackendCapability {
+  return { id, status, reason }
+}
+
+function speedtestCapabilities() {
+  return {
+    kind: 'report' as const,
+    report: {
+      daemonVersion: '0.1.0',
+      health: { status: 'healthy' as const, capabilityReason: 'all_requested_capabilities_available' },
+      capabilities: [
+        capability('network.speedtest.v1', 'healthy', 'curl_available'),
+        capability('network.deeptest.v1', 'healthy', 'iperf3_available'),
+      ],
+    },
+  }
+}
+
+function basicEnd(): SpeedTestBasicEnd {
+  return {
+    schemaVersion: 1,
+    startedAtUnixMs: 1_000,
+    endedAtUnixMs: 2_000,
+    stages: [
+      {
+        stage: 'latency',
+        payload: {
+          targets: [
+            {
+              host: 'github.com',
+              probes: [{ connectMs: 1, ttfbMs: 1697, httpCode: 200, error: null }],
+              avgTtfbMs: 1697,
+            },
+            {
+              host: 'bilibili.com',
+              probes: [{ connectMs: 1, ttfbMs: 120, httpCode: 200, error: null }],
+              avgTtfbMs: 120,
+            },
+          ],
+        },
+      },
+      {
+        stage: 'bandwidth',
+        payload: {
+          measurements: [
+            {
+              kind: 'international',
+              label: '国际线路',
+              source: 'speed.cloudflare.com',
+              downloadBitsPerSecond: 32_900_000,
+              uploadBitsPerSecond: 16_600_000,
+              httpCode: 200,
+              error: null,
+            },
+            {
+              kind: 'domestic',
+              label: '阿里云',
+              source: 'mirrors.aliyun.com',
+              downloadBitsPerSecond: 0,
+              uploadBitsPerSecond: null,
+              httpCode: 302,
+              error: 'curl_exit_47_too_many_redirects',
+            },
+          ],
+        },
+      },
+      {
+        stage: 'ip_purity',
+        payload: {
+          purity: {
+            source: 'ip-api.com',
+            ip: '38.92.26.68',
+            country: '美国',
+            region: '犹他州',
+            city: 'Draper',
+            isp: 'FiberState, LLC',
+            org: 'Fiberstate LLC',
+            asn: 'AS26042',
+            asname: 'FIBERSTATE',
+            proxy: false,
+            hosting: false,
+            mobile: false,
+            error: null,
+          },
+        },
+      },
+    ],
+    cancelled: false,
+    error: null,
+  }
+}
+
+describe('NetworkView speedtest tab', () => {
+  beforeEach(() => {
+    window.location.hash = ''
+    mockedNetwork.mockReset()
+    mockedCapabilities.mockReset()
+    mockedBasic.mockReset()
+    mockedCancel.mockReset()
+    mockedDeep.mockReset()
+  })
+
+  it('shows speedtest capabilities and the idle empty state', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-network-tab="speedtest"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.text()).toContain('基础测速')
+    expect(wrapper.text()).toContain('尚未测速')
+    expect(wrapper.text()).toContain('curl_available')
+    expect(wrapper.text()).toContain('iperf3_available')
+    expect(wrapper.get('.speed-start').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('disables the start button when the speedtest capability is unsupported', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue({
+      kind: 'report',
+      report: {
+        daemonVersion: '0.1.0',
+        health: { status: 'degraded', capabilityReason: 'appd_online_with_unavailable_capabilities' },
+        capabilities: [
+          capability('network.speedtest.v1', 'unsupported', 'curl_missing'),
+          capability('network.deeptest.v1', 'degraded', 'iperf3_missing'),
+        ],
+      },
+    })
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.speed-start').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('curl_missing')
+    wrapper.unmount()
+  })
+
+  it('runs the basic test and renders latency, bandwidth and IP purity facts', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    mockedBasic.mockResolvedValue({ kind: 'end', end: basicEnd() })
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('.speed-start').trigger('click')
+    await flushPromises()
+
+    expect(mockedBasic).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('github.com')
+    expect(wrapper.text()).toContain('1697')
+    expect(wrapper.text()).toContain('bilibili.com')
+    expect(wrapper.text()).toContain('正常')
+    expect(wrapper.text()).toContain('32.9')
+    expect(wrapper.text()).toContain('16.6')
+    expect(wrapper.text()).toContain('curl_exit_47_too_many_redirects')
+    expect(wrapper.text()).toContain('38.92.26.68')
+    expect(wrapper.text()).toContain('FiberState, LLC')
+    expect(wrapper.text()).toContain('AS26042')
+    expect(wrapper.text()).toContain('未标记')
+    expect(wrapper.text()).toContain('上次测速')
+    wrapper.unmount()
+  })
+
+  it('cancels a running basic test', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    mockedBasic.mockReturnValue(new Promise(() => {}))
+    mockedCancel.mockResolvedValue({ kind: 'cancelled', result: { cancelled: true, reason: 'cancellation_requested' } })
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('.speed-start').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('正在测量')
+    const cancelButton = wrapper.findAll('.speed-secondary').find((button) => button.text().includes('取消'))
+    expect(cancelButton).toBeDefined()
+    await cancelButton!.trigger('click')
+    await flushPromises()
+    expect(mockedCancel).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('reports a typed bridge failure from the basic test', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    mockedBasic.mockResolvedValue({
+      kind: 'error',
+      error: {
+        kind: 'transport',
+        code: 'speedtest_basic_unreachable',
+        reason: 'appd_socket_unavailable',
+        retryable: true,
+      },
+    })
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('.speed-start').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('测速失败')
+    expect(wrapper.text()).toContain('appd_socket_unavailable')
+    wrapper.unmount()
+  })
+
+  it('runs iperf3, wifi scan and linssid commands from the deep panel', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    mockedDeep.mockImplementation((command) => {
+      if (command.command === 'iperf3_start') {
+        return Promise.resolve({
+          kind: 'output',
+          output: {
+            type: 'iperf3',
+            payload: {
+              server: '10.0.0.8',
+              port: 5201,
+              direction: 'upload',
+              durationSecs: 10,
+              parallel: 1,
+              startedAtUnixMs: 1,
+              endedAtUnixMs: 2,
+              downloadBitsPerSecond: null,
+              uploadBitsPerSecond: 95_000_000,
+              retransmits: 2,
+              jitterMs: null,
+              error: null,
+            },
+          },
+        })
+      }
+      if (command.command === 'wifi_scan') {
+        return Promise.resolve({
+          kind: 'output',
+          output: {
+            type: 'wifi_scan',
+            payload: {
+              scannedAtUnixMs: 1_000,
+              source: 'nmcli',
+              networks: [
+                { ssid: 'Rhino-5G', signalPercent: 100, channel: 36, band: '5 GHz', security: 'WPA2 WPA3' },
+              ],
+              error: null,
+            },
+          },
+        })
+      }
+      return Promise.resolve({
+        kind: 'output',
+        output: {
+          type: 'linssid',
+          payload: { launched: true, executable: '/usr/sbin/linssid', reason: 'launched_via_pkexec' },
+        },
+      })
+    })
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.speed-segment')[1].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('尚未运行测速')
+    await wrapper.get('.iperf-form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('95.0')
+    expect(wrapper.text()).toContain('10.0.0.8:5201')
+
+    const scanButton = wrapper.findAll('.speed-secondary').find((button) => button.text().includes('扫描'))
+    expect(scanButton).toBeDefined()
+    await scanButton!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Rhino-5G')
+    expect(wrapper.text()).toContain('WPA2 WPA3')
+
+    const linssidButton = wrapper.findAll('.speed-secondary').find((button) => button.text().includes('启动 LinSSID'))
+    expect(linssidButton).toBeDefined()
+    await linssidButton!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('launched_via_pkexec')
     wrapper.unmount()
   })
 })

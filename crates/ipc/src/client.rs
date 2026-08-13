@@ -6,9 +6,9 @@ use crate::{
         MAX_RESPONSE_WIRE_BYTES, MAX_TOTAL_RECORDS, NetworkSnapshotEnd, NetworkSnapshotStart,
         NotesContentEnd, NotesContentKind, NotesContentStart, NotesPageEnd, NotesPageStart,
         RequestBody, RequestEnvelope, ResponseBody, ResponseEnvelope, SnapshotEnd, SnapshotStart,
-        TerminalStreamData, TerminalStreamEnd, TerminalStreamStart, TerminalStreamStatus,
-        TransferPageEnd, TransferPageStart, UsageSummaryEnd, UsageSummaryStart,
-        WIRE_PROTOCOL_VERSION,
+        SystemInfoReport, TerminalStreamData, TerminalStreamEnd, TerminalStreamStart,
+        TerminalStreamStatus, TransferPageEnd, TransferPageStart, UsageSummaryEnd,
+        UsageSummaryStart, WIRE_PROTOCOL_VERSION,
     },
     peer::{PeerError, verify_peer_uid},
 };
@@ -18,6 +18,7 @@ use localdesk_domain::{
     MAX_NOTE_CONTENT_BASE64_BYTES, MAX_NOTE_EXPORT_BYTES, MAX_USAGE_APPLICATIONS,
     NETWORK_SCHEMA_VERSION, NOTE_CONTENT_CHUNK_BYTES, NOTES_SCHEMA_VERSION, NetworkSnapshot,
     NoteDocument, NoteExport, NoteMutationResult, NotePage, NotesCommand, NotesOutput,
+    SpeedTestBasicEnd, SpeedTestCancelResult, SpeedTestDeepOutput, SpeedTestStageData,
     TELEMETRY_SCHEMA_VERSION, TelemetrySnapshot, USAGE_SCHEMA_VERSION, UsageSummary,
     UsageSummaryQuery,
 };
@@ -66,6 +67,8 @@ pub enum TerminalStreamEvent {
 pub const HEALTH_TOTAL_DEADLINE: Duration = Duration::from_secs(2);
 pub const SNAPSHOT_TOTAL_DEADLINE: Duration = Duration::from_secs(5);
 pub const REMOTE_SESSION_TOTAL_DEADLINE: Duration = Duration::from_secs(70);
+pub const SPEEDTEST_TOTAL_DEADLINE: Duration = Duration::from_secs(180);
+pub const SYSTEM_INFO_TOTAL_DEADLINE: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -350,6 +353,41 @@ pub async fn request_remote_capabilities(
                 .map_err(|_| ProtocolError::UnexpectedBody)?;
             expect_eof(&mut stream, deadline).await?;
             Ok(catalog)
+        }
+        ResponseBody::Error(error) => {
+            expect_eof(&mut stream, deadline).await?;
+            Err(ClientError::Daemon(error))
+        }
+        _ => Err(ProtocolError::UnexpectedBody.into()),
+    }
+}
+
+pub async fn request_system_info(
+    path: &Path,
+    request: RequestEnvelope,
+) -> Result<SystemInfoReport, ClientError> {
+    if !matches!(request.body, RequestBody::SystemInfo(_)) {
+        return Err(ProtocolError::RequestBody.into());
+    }
+    let request_id = request.request_id;
+    let deadline = Instant::now() + SYSTEM_INFO_TOTAL_DEADLINE;
+    let mut stream = connect(path, deadline).await?;
+    write_json(&mut stream, &request, deadline)
+        .await
+        .map_err(map_frame_error)?;
+    let mut budget = response_budget();
+    let response = read_response(&mut stream, deadline, &mut budget, false).await?;
+    validate_envelope(&response, request_id)?;
+    if response.sequence != 0 || response.snapshot_id.is_some() {
+        return Err(ProtocolError::UnexpectedBody.into());
+    }
+    match response.body {
+        ResponseBody::SystemInfo(report) => {
+            if !report.validate() {
+                return Err(ProtocolError::UnexpectedBody.into());
+            }
+            expect_eof(&mut stream, deadline).await?;
+            Ok(report)
         }
         ResponseBody::Error(error) => {
             expect_eof(&mut stream, deadline).await?;
@@ -1738,6 +1776,139 @@ fn next_sequence(sequence: u32) -> Result<u32, ProtocolError> {
     sequence
         .checked_add(1)
         .ok_or(ProtocolError::SequenceOverflow)
+}
+
+pub async fn request_speedtest_basic<F>(
+    path: &Path,
+    request: RequestEnvelope,
+    mut on_stage: F,
+) -> Result<SpeedTestBasicEnd, ClientError>
+where
+    F: FnMut(SpeedTestStageData) -> Result<(), ClientError>,
+{
+    if !matches!(request.body, RequestBody::SpeedTestBasic(_)) {
+        return Err(ProtocolError::RequestBody.into());
+    }
+    let request_id = request.request_id;
+    let deadline = Instant::now() + SPEEDTEST_TOTAL_DEADLINE;
+    let mut stream = connect(path, deadline).await?;
+    write_json(&mut stream, &request, deadline)
+        .await
+        .map_err(map_frame_error)?;
+
+    let mut budget = response_budget();
+    let mut expected_sequence = 0_u32;
+    loop {
+        let response = read_response_with_idle_timeout(
+            &mut stream,
+            deadline,
+            SPEEDTEST_TOTAL_DEADLINE,
+            &mut budget,
+            false,
+        )
+        .await?;
+        validate_envelope(&response, request_id)?;
+        if response.sequence != expected_sequence || response.snapshot_id.is_some() {
+            return Err(ProtocolError::Sequence.into());
+        }
+        expected_sequence = next_sequence(expected_sequence)?;
+        match response.body {
+            ResponseBody::SpeedTestStage(stage) => {
+                if !stage.validate() {
+                    return Err(ProtocolError::InvalidChunk.into());
+                }
+                on_stage(stage)?;
+            }
+            ResponseBody::SpeedTestBasicEnd(end) => {
+                if !end.validate() {
+                    return Err(ProtocolError::InvalidEnd.into());
+                }
+                let result = *end;
+                expect_eof(&mut stream, Instant::now() + HEALTH_TOTAL_DEADLINE).await?;
+                return Ok(result);
+            }
+            ResponseBody::Error(error) => {
+                expect_eof(&mut stream, Instant::now() + HEALTH_TOTAL_DEADLINE).await?;
+                return Err(ClientError::Daemon(error));
+            }
+            _ => return Err(ProtocolError::UnexpectedBody.into()),
+        }
+    }
+}
+
+pub async fn request_speedtest_cancel(
+    path: &Path,
+    request: RequestEnvelope,
+) -> Result<SpeedTestCancelResult, ClientError> {
+    if !matches!(request.body, RequestBody::SpeedTestCancel(_)) {
+        return Err(ProtocolError::RequestBody.into());
+    }
+    let request_id = request.request_id;
+    let deadline = Instant::now() + SNAPSHOT_TOTAL_DEADLINE;
+    let mut stream = connect(path, deadline).await?;
+    write_json(&mut stream, &request, deadline)
+        .await
+        .map_err(map_frame_error)?;
+    let mut budget = response_budget();
+    let response = read_response(&mut stream, deadline, &mut budget, false).await?;
+    validate_envelope(&response, request_id)?;
+    if response.sequence != 0 || response.snapshot_id.is_some() {
+        return Err(ProtocolError::Sequence.into());
+    }
+    match response.body {
+        ResponseBody::SpeedTestCancelled(result) => {
+            if !result.validate() {
+                return Err(ProtocolError::InvalidEnd.into());
+            }
+            expect_eof(&mut stream, Instant::now() + HEALTH_TOTAL_DEADLINE).await?;
+            Ok(result)
+        }
+        ResponseBody::Error(error) => {
+            expect_eof(&mut stream, Instant::now() + HEALTH_TOTAL_DEADLINE).await?;
+            Err(ClientError::Daemon(error))
+        }
+        _ => Err(ProtocolError::UnexpectedBody.into()),
+    }
+}
+
+pub async fn request_speedtest_deep(
+    path: &Path,
+    request: RequestEnvelope,
+) -> Result<SpeedTestDeepOutput, ClientError> {
+    let RequestBody::SpeedTestDeep(command) = &request.body else {
+        return Err(ProtocolError::RequestBody.into());
+    };
+    command.validate().map_err(|_| ProtocolError::RequestBody)?;
+    let command = command.clone();
+    let request_id = request.request_id;
+    let deep_deadline = crate::message::speedtest_deep_deadline(&command);
+    let deadline = Instant::now() + deep_deadline;
+    let mut stream = connect(path, deadline).await?;
+    write_json(&mut stream, &request, deadline)
+        .await
+        .map_err(map_frame_error)?;
+    let mut budget = response_budget();
+    let response =
+        read_response_with_idle_timeout(&mut stream, deadline, deep_deadline, &mut budget, false)
+            .await?;
+    validate_envelope(&response, request_id)?;
+    if response.sequence != 0 || response.snapshot_id.is_some() {
+        return Err(ProtocolError::Sequence.into());
+    }
+    match response.body {
+        ResponseBody::SpeedTestDeep(output) => {
+            if !output.validate_for(&command) {
+                return Err(ProtocolError::InvalidEnd.into());
+            }
+            expect_eof(&mut stream, Instant::now() + HEALTH_TOTAL_DEADLINE).await?;
+            Ok(*output)
+        }
+        ResponseBody::Error(error) => {
+            expect_eof(&mut stream, Instant::now() + HEALTH_TOTAL_DEADLINE).await?;
+            Err(ClientError::Daemon(error))
+        }
+        _ => Err(ProtocolError::UnexpectedBody.into()),
+    }
 }
 
 #[cfg(test)]

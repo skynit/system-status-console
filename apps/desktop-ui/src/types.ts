@@ -278,6 +278,35 @@ export type UsageFetchResult =
   | { kind: 'summary'; summary: UsageSummary }
   | { kind: 'error'; error: BridgeError }
 
+export interface SystemInfoEntry {
+  key: string
+  value: string
+}
+
+export interface SystemInfoGroup {
+  title: string | null
+  entries: SystemInfoEntry[]
+}
+
+export interface SystemInfoSection {
+  id: string
+  groups: SystemInfoGroup[]
+}
+
+export interface SystemInfoReport {
+  schemaVersion: number
+  capturedAtUnixMs: number | null
+  toolVersion: string | null
+  status: BackendStatus
+  reason: string
+  retryable: boolean
+  sections: SystemInfoSection[]
+}
+
+export type SystemInfoFetchResult =
+  | { kind: 'systemInfo'; report: SystemInfoReport }
+  | { kind: 'error'; error: BridgeError }
+
 export const remoteProtocols = ['ssh', 'sftp', 'ftp', 'ftps_explicit', 'smb'] as const
 export type RemoteProtocol = (typeof remoteProtocols)[number]
 
@@ -784,4 +813,141 @@ export type TransferMutationFetchResult =
 
 export type TransferPickResult =
   | { kind: 'picked'; grant: TransferLocalHandleGrant | null }
+  | { kind: 'error'; error: BridgeError }
+
+// ---- 网络测速 ----
+
+export const speedTestStageValues = ['latency', 'bandwidth', 'ip_purity'] as const
+export type SpeedTestStage = (typeof speedTestStageValues)[number]
+
+export interface LatencyProbe {
+  connectMs: number | null
+  ttfbMs: number | null
+  httpCode: number | null
+  error: string | null
+}
+
+export interface LatencyTargetResult {
+  host: string
+  probes: LatencyProbe[]
+  avgTtfbMs: number | null
+}
+
+export const bandwidthKindValues = ['international', 'domestic'] as const
+export type BandwidthKind = (typeof bandwidthKindValues)[number]
+
+export interface BandwidthMeasurement {
+  kind: BandwidthKind
+  label: string
+  source: string
+  downloadBitsPerSecond: number | null
+  uploadBitsPerSecond: number | null
+  httpCode: number | null
+  error: string | null
+}
+
+export interface IpPurityResult {
+  source: string
+  ip: string | null
+  country: string | null
+  region: string | null
+  city: string | null
+  isp: string | null
+  org: string | null
+  asn: string | null
+  asname: string | null
+  proxy: boolean | null
+  hosting: boolean | null
+  mobile: boolean | null
+  error: string | null
+}
+
+export type SpeedTestStageData =
+  | { stage: 'latency'; payload: { targets: LatencyTargetResult[] } }
+  | { stage: 'bandwidth'; payload: { measurements: BandwidthMeasurement[] } }
+  | { stage: 'ip_purity'; payload: { purity: IpPurityResult } }
+
+export interface SpeedTestBasicEnd {
+  schemaVersion: number
+  startedAtUnixMs: number
+  endedAtUnixMs: number
+  stages: SpeedTestStageData[]
+  cancelled: boolean
+  error: string | null
+}
+
+export const iperf3DirectionValues = ['download', 'upload', 'bidirectional'] as const
+export type Iperf3Direction = (typeof iperf3DirectionValues)[number]
+
+export type SpeedTestDeepCommand =
+  | {
+      command: 'iperf3_start'
+      params: {
+        server: string
+        port: number
+        direction: Iperf3Direction
+        duration_secs: number
+        parallel: number
+      }
+    }
+  | { command: 'iperf3_stop'; params: null }
+  | { command: 'wifi_scan'; params: null }
+  | { command: 'linssid_launch'; params: null }
+
+export interface Iperf3Result {
+  server: string
+  port: number
+  direction: Iperf3Direction
+  durationSecs: number
+  parallel: number
+  startedAtUnixMs: number
+  endedAtUnixMs: number
+  downloadBitsPerSecond: number | null
+  uploadBitsPerSecond: number | null
+  retransmits: number | null
+  jitterMs: number | null
+  error: string | null
+}
+
+export interface WifiNetwork {
+  ssid: string
+  signalPercent: number | null
+  channel: number | null
+  band: string | null
+  security: string | null
+}
+
+export interface WifiScanResult {
+  scannedAtUnixMs: number
+  source: string
+  networks: WifiNetwork[]
+  error: string | null
+}
+
+export interface LinssidLaunchResult {
+  launched: boolean
+  executable: string | null
+  reason: string
+}
+
+export type SpeedTestDeepOutput =
+  | { type: 'iperf3'; payload: Iperf3Result }
+  | { type: 'wifi_scan'; payload: WifiScanResult }
+  | { type: 'linssid'; payload: LinssidLaunchResult }
+
+export interface SpeedTestCancelResult {
+  cancelled: boolean
+  reason: string
+}
+
+export type SpeedTestBasicFetchResult =
+  | { kind: 'end'; end: SpeedTestBasicEnd }
+  | { kind: 'error'; error: BridgeError }
+
+export type SpeedTestCancelFetchResult =
+  | { kind: 'cancelled'; result: SpeedTestCancelResult }
+  | { kind: 'error'; error: BridgeError }
+
+export type SpeedTestDeepFetchResult =
+  | { kind: 'output'; output: SpeedTestDeepOutput }
   | { kind: 'error'; error: BridgeError }

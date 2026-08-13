@@ -98,6 +98,27 @@ import {
   type RemoteTrustPolicy,
   type StoredRemoteProfile,
   type SystemFdTelemetry,
+  type BandwidthMeasurement,
+  type Iperf3Result,
+  type IpPurityResult,
+  type LatencyProbe,
+  type LatencyTargetResult,
+  type LinssidLaunchResult,
+  type SpeedTestBasicEnd,
+  type SpeedTestBasicFetchResult,
+  type SpeedTestCancelFetchResult,
+  type SpeedTestCancelResult,
+  type SpeedTestDeepCommand,
+  type SpeedTestDeepFetchResult,
+  type SpeedTestDeepOutput,
+  type SpeedTestStageData,
+  type SystemInfoEntry,
+  type SystemInfoFetchResult,
+  type WifiNetwork,
+  type WifiScanResult,
+  type SystemInfoGroup,
+  type SystemInfoReport,
+  type SystemInfoSection,
   type TerminalCapabilities,
   type TerminalRead,
   type TerminalSize,
@@ -871,6 +892,74 @@ export async function getUsageSummary(query: UsageSummaryQuery): Promise<UsageFe
         }
   } catch (error) {
     return { kind: 'error', error: normalizeBridgeError(error, 'usage_summary_unreachable') }
+  }
+}
+
+function normalizeSystemInfoReport(value: unknown): SystemInfoReport | null {
+  if (
+    !isRecord(value) ||
+    typeof value.schema_version !== 'number' ||
+    (value.captured_at_unix_ms !== null && typeof value.captured_at_unix_ms !== 'number') ||
+    (value.tool_version !== null && typeof value.tool_version !== 'string') ||
+    !isEnumValue(backendStatuses, value.status) ||
+    typeof value.reason !== 'string' ||
+    value.reason.length === 0 ||
+    typeof value.retryable !== 'boolean' ||
+    !Array.isArray(value.sections)
+  ) {
+    return null
+  }
+  const sections: SystemInfoSection[] = []
+  for (const section of value.sections) {
+    if (!isRecord(section) || typeof section.id !== 'string' || section.id.length === 0 || !Array.isArray(section.groups)) {
+      return null
+    }
+    const groups: SystemInfoGroup[] = []
+    for (const group of section.groups) {
+      if (!isRecord(group) || !Array.isArray(group.entries)) return null
+      const title = group.title === undefined || group.title === null ? null : group.title
+      if (title !== null && typeof title !== 'string') return null
+      const entries: SystemInfoEntry[] = []
+      for (const entry of group.entries) {
+        if (!isRecord(entry) || typeof entry.key !== 'string' || entry.key.length === 0 || typeof entry.value !== 'string') {
+          return null
+        }
+        entries.push({ key: entry.key, value: entry.value })
+      }
+      groups.push({ title, entries })
+    }
+    sections.push({ id: section.id, groups })
+  }
+  return {
+    schemaVersion: value.schema_version,
+    capturedAtUnixMs: value.captured_at_unix_ms,
+    toolVersion: value.tool_version,
+    status: value.status,
+    reason: value.reason,
+    retryable: value.retryable,
+    sections,
+  }
+}
+
+export async function getSystemInfo(): Promise<SystemInfoFetchResult> {
+  if (!isDesktopBridgeAvailable()) {
+    return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
+  }
+  try {
+    const report = normalizeSystemInfoReport(await invoke<unknown>('system_info'))
+    return report
+      ? { kind: 'systemInfo', report }
+      : {
+          kind: 'error',
+          error: {
+            kind: 'protocol',
+            code: 'invalid_system_info_report',
+            reason: 'invalid_system_info_report',
+            retryable: false,
+          },
+        }
+  } catch (error) {
+    return { kind: 'error', error: normalizeBridgeError(error, 'system_info_unreachable') }
   }
 }
 
@@ -2730,4 +2819,312 @@ export function pickUploadSource(): Promise<TransferPickResult> {
 
 export function pickDownloadDestination(): Promise<TransferPickResult> {
   return pickTransferLocalHandle('transfer_pick_download_destination')
+}
+
+// ---- 网络测速 ----
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function asNullableBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null
+}
+
+function asNullableU16(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 65535
+    ? value
+    : null
+}
+
+function normalizeLatencyProbe(value: unknown): LatencyProbe | null {
+  if (!isRecord(value)) return null
+  const connectMs = asNullableNumber(value.connect_ms)
+  const ttfbMs = asNullableNumber(value.ttfb_ms)
+  const httpCode = asNullableU16(value.http_code)
+  const error = asNullableString(value.error)
+  if (connectMs === null && ttfbMs === null && httpCode === null && error === null) return null
+  return { connectMs, ttfbMs, httpCode, error }
+}
+
+function normalizeLatencyTarget(value: unknown): LatencyTargetResult | null {
+  if (!isRecord(value) || typeof value.host !== 'string' || !Array.isArray(value.probes)) return null
+  const probes: LatencyProbe[] = []
+  for (const probe of value.probes) {
+    const normalized = normalizeLatencyProbe(probe)
+    if (!normalized) return null
+    probes.push(normalized)
+  }
+  if (probes.length === 0) return null
+  return { host: value.host, probes, avgTtfbMs: asNullableNumber(value.avg_ttfb_ms) }
+}
+
+function normalizeBandwidthMeasurement(value: unknown): BandwidthMeasurement | null {
+  if (!isRecord(value) || typeof value.label !== 'string' || typeof value.source !== 'string') {
+    return null
+  }
+  if (value.kind !== 'international' && value.kind !== 'domestic') return null
+  return {
+    kind: value.kind,
+    label: value.label,
+    source: value.source,
+    downloadBitsPerSecond: asNullableNumber(value.download_bits_per_second),
+    uploadBitsPerSecond: asNullableNumber(value.upload_bits_per_second),
+    httpCode: asNullableU16(value.http_code),
+    error: asNullableString(value.error),
+  }
+}
+
+function normalizeIpPurity(value: unknown): IpPurityResult | null {
+  if (!isRecord(value) || typeof value.source !== 'string') return null
+  return {
+    source: value.source,
+    ip: asNullableString(value.ip),
+    country: asNullableString(value.country),
+    region: asNullableString(value.region),
+    city: asNullableString(value.city),
+    isp: asNullableString(value.isp),
+    org: asNullableString(value.org),
+    asn: asNullableString(value.asn),
+    asname: asNullableString(value.asname),
+    proxy: asNullableBoolean(value.proxy),
+    hosting: asNullableBoolean(value.hosting),
+    mobile: asNullableBoolean(value.mobile),
+    error: asNullableString(value.error),
+  }
+}
+
+export function normalizeSpeedTestStageData(value: unknown): SpeedTestStageData | null {
+  if (!isRecord(value)) return null
+  if (value.stage === 'latency') {
+    const payload = isRecord(value.payload) && Array.isArray(value.payload.targets)
+      ? value.payload.targets
+      : null
+    if (!payload) return null
+    const targets: LatencyTargetResult[] = []
+    for (const target of payload) {
+      const normalized = normalizeLatencyTarget(target)
+      if (!normalized) return null
+      targets.push(normalized)
+    }
+    return targets.length > 0 ? { stage: 'latency', payload: { targets } } : null
+  }
+  if (value.stage === 'bandwidth') {
+    const payload = isRecord(value.payload) && Array.isArray(value.payload.measurements)
+      ? value.payload.measurements
+      : null
+    if (!payload) return null
+    const measurements: BandwidthMeasurement[] = []
+    for (const measurement of payload) {
+      const normalized = normalizeBandwidthMeasurement(measurement)
+      if (!normalized) return null
+      measurements.push(normalized)
+    }
+    return measurements.length > 0 ? { stage: 'bandwidth', payload: { measurements } } : null
+  }
+  if (value.stage === 'ip_purity') {
+    const purity = isRecord(value.payload) ? normalizeIpPurity(value.payload.purity) : null
+    return purity ? { stage: 'ip_purity', payload: { purity } } : null
+  }
+  return null
+}
+
+export function normalizeSpeedTestBasicEnd(value: unknown): SpeedTestBasicEnd | null {
+  if (!isRecord(value) || value.schema_version !== 1) return null
+  if (
+    typeof value.started_at_unix_ms !== 'number'
+    || typeof value.ended_at_unix_ms !== 'number'
+    || typeof value.cancelled !== 'boolean'
+    || !Array.isArray(value.stages)
+  ) {
+    return null
+  }
+  const stages: SpeedTestStageData[] = []
+  for (const stage of value.stages) {
+    const normalized = normalizeSpeedTestStageData(stage)
+    if (!normalized) return null
+    stages.push(normalized)
+  }
+  return {
+    schemaVersion: value.schema_version,
+    startedAtUnixMs: value.started_at_unix_ms,
+    endedAtUnixMs: value.ended_at_unix_ms,
+    stages,
+    cancelled: value.cancelled,
+    error: asNullableString(value.error),
+  }
+}
+
+function normalizeIperf3Result(value: unknown): Iperf3Result | null {
+  if (!isRecord(value) || typeof value.server !== 'string') return null
+  if (value.direction !== 'download' && value.direction !== 'upload' && value.direction !== 'bidirectional') {
+    return null
+  }
+  return {
+    server: value.server,
+    port: asNullableU16(value.port) ?? 0,
+    direction: value.direction,
+    durationSecs: typeof value.duration_secs === 'number' ? value.duration_secs : 0,
+    parallel: typeof value.parallel === 'number' ? value.parallel : 0,
+    startedAtUnixMs: typeof value.started_at_unix_ms === 'number' ? value.started_at_unix_ms : 0,
+    endedAtUnixMs: typeof value.ended_at_unix_ms === 'number' ? value.ended_at_unix_ms : 0,
+    downloadBitsPerSecond: asNullableNumber(value.download_bits_per_second),
+    uploadBitsPerSecond: asNullableNumber(value.upload_bits_per_second),
+    retransmits: asNullableNumber(value.retransmits),
+    jitterMs: asNullableNumber(value.jitter_ms),
+    error: asNullableString(value.error),
+  }
+}
+
+function normalizeWifiScan(value: unknown): WifiScanResult | null {
+  if (!isRecord(value) || typeof value.scanned_at_unix_ms !== 'number') return null
+  if (!Array.isArray(value.networks)) return null
+  const networks: WifiNetwork[] = []
+  for (const network of value.networks) {
+    if (!isRecord(network) || typeof network.ssid !== 'string') return null
+    networks.push({
+      ssid: network.ssid,
+      signalPercent: asNullableNumber(network.signal_percent),
+      channel: asNullableNumber(network.channel),
+      band: asNullableString(network.band),
+      security: asNullableString(network.security),
+    })
+  }
+  return {
+    scannedAtUnixMs: value.scanned_at_unix_ms,
+    source: typeof value.source === 'string' ? value.source : '',
+    networks,
+    error: asNullableString(value.error),
+  }
+}
+
+function normalizeLinssidLaunch(value: unknown): LinssidLaunchResult | null {
+  if (!isRecord(value) || typeof value.launched !== 'boolean' || typeof value.reason !== 'string') {
+    return null
+  }
+  return {
+    launched: value.launched,
+    executable: asNullableString(value.executable),
+    reason: value.reason,
+  }
+}
+
+export function normalizeSpeedTestDeepOutput(value: unknown): SpeedTestDeepOutput | null {
+  if (!isRecord(value) || !isRecord(value.payload)) return null
+  if (value.type === 'iperf3') {
+    const result = normalizeIperf3Result(value.payload)
+    return result ? { type: 'iperf3', payload: result } : null
+  }
+  if (value.type === 'wifi_scan') {
+    const result = normalizeWifiScan(value.payload)
+    return result ? { type: 'wifi_scan', payload: result } : null
+  }
+  if (value.type === 'linssid') {
+    const result = normalizeLinssidLaunch(value.payload)
+    return result ? { type: 'linssid', payload: result } : null
+  }
+  return null
+}
+
+export function normalizeSpeedTestCancelResult(value: unknown): SpeedTestCancelResult | null {
+  if (!isRecord(value) || typeof value.cancelled !== 'boolean' || typeof value.reason !== 'string') {
+    return null
+  }
+  return { cancelled: value.cancelled, reason: value.reason }
+}
+
+export async function runSpeedTestBasic(
+  onStage: (stage: SpeedTestStageData) => void,
+): Promise<SpeedTestBasicFetchResult> {
+  if (!isDesktopBridgeAvailable()) {
+    return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
+  }
+  let invalidEvent = false
+  const channel = new Channel<unknown>()
+  channel.onmessage = (value) => {
+    const stage = normalizeSpeedTestStageData(value)
+    if (stage) onStage(stage)
+    else invalidEvent = true
+  }
+  try {
+    const end = normalizeSpeedTestBasicEnd(
+      await invoke<unknown>('speedtest_basic', { onStage: channel }),
+    )
+    if (!end) {
+      return {
+        kind: 'error',
+        error: {
+          kind: 'protocol',
+          code: 'invalid_speedtest_basic_end',
+          reason: 'invalid_speedtest_basic_end',
+          retryable: false,
+        },
+      }
+    }
+    return invalidEvent
+      ? {
+          kind: 'error',
+          error: {
+            kind: 'protocol',
+            code: 'invalid_speedtest_stage_event',
+            reason: 'invalid_speedtest_stage_event',
+            retryable: false,
+          },
+        }
+      : { kind: 'end', end }
+  } catch (error) {
+    return { kind: 'error', error: normalizeBridgeError(error, 'speedtest_basic_unreachable') }
+  }
+}
+
+export async function cancelSpeedTest(): Promise<SpeedTestCancelFetchResult> {
+  if (!isDesktopBridgeAvailable()) {
+    return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
+  }
+  try {
+    const result = normalizeSpeedTestCancelResult(await invoke<unknown>('speedtest_cancel'))
+    return result
+      ? { kind: 'cancelled', result }
+      : {
+          kind: 'error',
+          error: {
+            kind: 'protocol',
+            code: 'invalid_speedtest_cancel_result',
+            reason: 'invalid_speedtest_cancel_result',
+            retryable: false,
+          },
+        }
+  } catch (error) {
+    return { kind: 'error', error: normalizeBridgeError(error, 'speedtest_cancel_unreachable') }
+  }
+}
+
+export async function runSpeedTestDeep(
+  command: SpeedTestDeepCommand,
+): Promise<SpeedTestDeepFetchResult> {
+  if (!isDesktopBridgeAvailable()) {
+    return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
+  }
+  try {
+    const output = normalizeSpeedTestDeepOutput(
+      await invoke<unknown>('speedtest_deep', { command }),
+    )
+    return output
+      ? { kind: 'output', output }
+      : {
+          kind: 'error',
+          error: {
+            kind: 'protocol',
+            code: 'invalid_speedtest_deep_output',
+            reason: 'invalid_speedtest_deep_output',
+            retryable: false,
+          },
+        }
+  } catch (error) {
+    return { kind: 'error', error: normalizeBridgeError(error, 'speedtest_deep_unreachable') }
+  }
 }

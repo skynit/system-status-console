@@ -14,6 +14,7 @@ members = [
     "crates/remote-smb",
     "crates/transfers",
     "crates/notes",
+    "crates/systeminfo",
     "bins/appd",
     "bins/telemetry-helper",
     "bins/network-helper",
@@ -48,6 +49,7 @@ localdesk-remote-smb = { path = "crates/remote-smb" }
 localdesk-remote-ssh = { path = "crates/remote-ssh" }
 localdesk-telemetry = { path = "crates/telemetry" }
 localdesk-telemetry-helper-protocol = { path = "crates/telemetry-helper-protocol" }
+localdesk-systeminfo = { path = "crates/systeminfo" }
 localdesk-transfers = { path = "crates/transfers" }
 localdesk-usage = { path = "crates/usage" }
 nix = { version = "=0.31.3", features = ["socket", "user", "feature", "fs"] }

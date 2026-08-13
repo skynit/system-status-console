@@ -6,11 +6,12 @@ mod server;
 
 pub use client::{
     ClientError, HEALTH_TOTAL_DEADLINE, ProtocolError, REMOTE_SESSION_TOTAL_DEADLINE,
-    SNAPSHOT_TOTAL_DEADLINE, TerminalStreamEvent, TransportError, request_health,
-    request_network_snapshot, request_notes, request_remote_capabilities, request_remote_profile,
-    request_remote_session, request_secret, request_telemetry_snapshot, request_terminal,
-    request_terminal_stream, request_transfer, request_transfer_local_handle,
-    request_usage_summary,
+    SNAPSHOT_TOTAL_DEADLINE, SPEEDTEST_TOTAL_DEADLINE, SYSTEM_INFO_TOTAL_DEADLINE,
+    TerminalStreamEvent, TransportError, request_health, request_network_snapshot, request_notes,
+    request_remote_capabilities, request_remote_profile, request_remote_session, request_secret,
+    request_speedtest_basic, request_speedtest_cancel, request_speedtest_deep,
+    request_system_info, request_telemetry_snapshot, request_terminal, request_terminal_stream,
+    request_transfer, request_transfer_local_handle, request_usage_summary,
 };
 pub use frame::{
     FRAME_IDLE_TIMEOUT, FrameError, MAX_FRAME_PAYLOAD_BYTES, WireBudget, configured_codec,
@@ -25,10 +26,12 @@ pub use message::{
     NetworkSnapshotEnd, NetworkSnapshotRequest, NetworkSnapshotStart, NoteSummaryChunk,
     NotesContentChunk, NotesContentEnd, NotesContentKind, NotesContentStart, NotesPageEnd,
     NotesPageStart, RemoteCapabilitiesRequest, RequestBody, RequestEnvelope, ResponseBody,
-    ResponseEnvelope, SnapshotEnd, SnapshotStart, TelemetrySnapshotRequest, TerminalStreamData,
-    TerminalStreamEnd, TerminalStreamStart, TerminalStreamStatus, TransferLocalHandleBind,
-    TransferPageEnd, TransferPageStart, TransferTaskChunk, UsageApplicationChunk, UsageSummaryEnd,
-    UsageSummaryRequest, UsageSummaryStart, WIRE_PROTOCOL_VERSION,
+    ResponseEnvelope, SnapshotEnd, SnapshotStart, SpeedTestBasicRequest, SpeedTestCancelRequest,
+    SpeedTestStreamEvent, SystemInfoReport, SystemInfoRequest, TelemetrySnapshotRequest,
+    TerminalStreamData, TerminalStreamEnd, TerminalStreamStart, TerminalStreamStatus,
+    TransferLocalHandleBind, TransferPageEnd, TransferPageStart, TransferTaskChunk,
+    UsageApplicationChunk, UsageSummaryEnd, UsageSummaryRequest, UsageSummaryStart,
+    WIRE_PROTOCOL_VERSION, speedtest_deep_deadline,
 };
 pub use peer::{PeerError, PeerIdentity, verify_peer_uid};
 pub use server::{
@@ -37,8 +40,10 @@ pub use server::{
     RemoteCapabilitiesProviderFuture, RemoteProfileProvider, RemoteProfileProviderFuture,
     RemoteSessionProvider, RemoteSessionProviderFuture, SHUTDOWN_GRACE, SecretCommandProvider,
     SecretCommandProviderFuture, ServerConfig, ServerError, SnapshotProvider,
-    SnapshotProviderError, SnapshotProviderFuture, TerminalProvider, TerminalProviderFuture,
-    TransferLocalHandleProvider, TransferLocalHandleProviderFuture, TransferProvider,
-    TransferProviderFuture, UsageSummaryProvider, UsageSummaryProviderFuture, handle_connection,
-    serve,
+    SnapshotProviderError, SnapshotProviderFuture, SpeedTestCancelProvider,
+    SpeedTestCancelProviderFuture, SpeedTestDeepProvider, SpeedTestDeepProviderFuture,
+    SpeedTestProvider, SpeedTestProviderFuture, SystemInfoProvider, SystemInfoProviderFuture,
+    TerminalProvider, TerminalProviderFuture, TransferLocalHandleProvider,
+    TransferLocalHandleProviderFuture, TransferProvider, TransferProviderFuture,
+    UsageSummaryProvider, UsageSummaryProviderFuture, handle_connection, serve,
 };

@@ -10,6 +10,7 @@ base64.workspace = true
 bytes.workspace = true
 localdesk-domain.workspace = true
 localdesk-remote-core.workspace = true
+localdesk-systeminfo.workspace = true
 localdesk-transfers.workspace = true
 nix.workspace = true
 serde.workspace = true

@@ -716,7 +716,8 @@ code,
 .network-console,
 .applications-console,
 .transfers-console,
-.notes-console {
+.notes-console,
+.settings-console {
   display: grid;
   min-height: calc(100vh - 266px);
   overflow: visible;
@@ -734,7 +735,8 @@ code,
 .remote-tabs,
 .network-tabs,
 .applications-tabs,
-.notes-tabs {
+.notes-tabs,
+.settings-tabs {
   display: flex;
   min-width: 0;
   min-height: 70px;
@@ -748,7 +750,8 @@ code,
 .remote-tab,
 .network-tab,
 .applications-tab,
-.notes-tab {
+.notes-tab,
+.settings-tab {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -764,14 +767,16 @@ code,
 .remote-tab::after,
 .network-tab::after,
 .applications-tab::after,
-.notes-tab::after {
+.notes-tab::after,
+.settings-tab::after {
   display: none;
 }
 
 .remote-tab:hover:not(.is-active),
 .network-tab:hover:not(.is-active),
 .applications-tab:hover:not(.is-active),
-.notes-tab:hover:not(.is-active) {
+.notes-tab:hover:not(.is-active),
+.settings-tab:hover:not(.is-active) {
   background: var(--atr-turquoise);
   color: var(--atr-ink);
 }
@@ -779,7 +784,8 @@ code,
 .remote-tab.is-active,
 .network-tab.is-active,
 .applications-tab.is-active,
-.notes-tab.is-active {
+.notes-tab.is-active,
+.settings-tab.is-active {
   background: var(--atr-lavender);
   color: var(--atr-ink);
 }
@@ -787,7 +793,8 @@ code,
 .remote-refresh,
 .network-refresh,
 .applications-refresh,
-.notes-refresh {
+.notes-refresh,
+.settings-refresh {
   width: 44px;
   height: 44px;
   margin-left: auto;
@@ -1827,7 +1834,8 @@ code,
   .remote-tabs,
   .network-tabs,
   .applications-tabs,
-  .notes-tabs {
+  .notes-tabs,
+  .settings-tabs {
     padding-inline: 12px;
     overflow-x: auto;
   }
@@ -1835,7 +1843,8 @@ code,
   .remote-tab,
   .network-tab,
   .applications-tab,
-  .notes-tab {
+  .notes-tab,
+  .settings-tab {
     flex: 0 0 auto;
   }
 

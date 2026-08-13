@@ -2,8 +2,9 @@ use localdesk_domain::{
     APPD_HEALTH_CAPABILITY, ApplicationSample, Capability, HealthState, IssueCount,
     MAX_NOTE_EXPORT_DATA_FRAMES, NetworkApplicationTraffic, NetworkCapabilityState,
     NetworkCoverage, NetworkFreshness, NetworkInterfaceSample, NetworkRate, NetworkTrafficTotals,
-    NoteExportFormat, NoteMutationResult, NoteQuery, NoteSummary, NotesCommand, SystemFdSample,
-    TelemetryFreshness, TelemetryStatus, UsageApplicationDuration, UsageCoverage,
+    NoteExportFormat, NoteMutationResult, NoteQuery, NoteSummary, NotesCommand, SpeedTestBasicEnd,
+    SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestStageData,
+    SystemFdSample, TelemetryFreshness, TelemetryStatus, UsageApplicationDuration, UsageCoverage,
     UsageSummaryQuery,
 };
 use localdesk_remote_core::{
@@ -11,16 +12,18 @@ use localdesk_remote_core::{
     RemoteSessionResult, SecretCommand, SecretCommandResult, TerminalCommand, TerminalData,
     TerminalResult, TerminalSessionId, TerminalStatus,
 };
+use localdesk_systeminfo::{SystemInfoSection, SYSTEM_INFO_SCHEMA_VERSION};
 use localdesk_transfers::{
     TransferCommand, TransferLocalHandleGrant, TransferLocalHandlePurpose, TransferQuery,
     TransferTask,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const WIRE_PROTOCOL_VERSION: u16 = 12;
+pub const WIRE_PROTOCOL_VERSION: u16 = 13;
 pub const MAX_REQUESTED_CAPABILITIES: usize = 32;
 pub const MAX_CHUNK_RECORDS: usize = 32;
 pub const MAX_APPLICATION_RECORDS: usize = 1_024;
@@ -87,6 +90,14 @@ impl RequestEnvelope {
         }
     }
 
+    pub fn system_info() -> Self {
+        Self {
+            protocol_version: WIRE_PROTOCOL_VERSION,
+            request_id: Uuid::new_v4(),
+            body: RequestBody::SystemInfo(SystemInfoRequest {}),
+        }
+    }
+
     pub fn remote_profile(command: RemoteProfileCommand) -> Self {
         Self {
             protocol_version: WIRE_PROTOCOL_VERSION,
@@ -142,6 +153,30 @@ impl RequestEnvelope {
             body: RequestBody::TransferLocalHandle(bind),
         }
     }
+
+    pub fn speedtest_basic() -> Self {
+        Self {
+            protocol_version: WIRE_PROTOCOL_VERSION,
+            request_id: Uuid::new_v4(),
+            body: RequestBody::SpeedTestBasic(SpeedTestBasicRequest {}),
+        }
+    }
+
+    pub fn speedtest_cancel() -> Self {
+        Self {
+            protocol_version: WIRE_PROTOCOL_VERSION,
+            request_id: Uuid::new_v4(),
+            body: RequestBody::SpeedTestCancel(SpeedTestCancelRequest {}),
+        }
+    }
+
+    pub fn speedtest_deep(command: SpeedTestDeepCommand) -> Self {
+        Self {
+            protocol_version: WIRE_PROTOCOL_VERSION,
+            request_id: Uuid::new_v4(),
+            body: RequestBody::SpeedTestDeep(command),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -152,6 +187,7 @@ pub enum RequestBody {
     NetworkSnapshot(NetworkSnapshotRequest),
     UsageSummary(UsageSummaryRequest),
     RemoteCapabilities(RemoteCapabilitiesRequest),
+    SystemInfo(SystemInfoRequest),
     RemoteProfile(RemoteProfileCommand),
     Secret(SecretCommand),
     RemoteSession(RemoteSessionCommand),
@@ -159,6 +195,25 @@ pub enum RequestBody {
     Terminal(TerminalCommand),
     Transfer(TransferCommand),
     TransferLocalHandle(TransferLocalHandleBind),
+    SpeedTestBasic(SpeedTestBasicRequest),
+    SpeedTestCancel(SpeedTestCancelRequest),
+    SpeedTestDeep(SpeedTestDeepCommand),
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeedTestBasicRequest {}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeedTestCancelRequest {}
+
+/// Frames pushed by the appd basic-test runner; the server forwards each to the client.
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "event", content = "payload", rename_all = "snake_case")]
+pub enum SpeedTestStreamEvent {
+    Stage(SpeedTestStageData),
+    End(Box<SpeedTestBasicEnd>),
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -207,6 +262,10 @@ pub struct UsageSummaryRequest {
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteCapabilitiesRequest {}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemInfoRequest {}
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -280,6 +339,7 @@ pub enum ResponseBody {
     UsageApplicationChunk(UsageApplicationChunk),
     UsageSummaryEnd(UsageSummaryEnd),
     RemoteCapabilities(RemoteAdapterCatalog),
+    SystemInfo(SystemInfoReport),
     RemoteProfile(RemoteProfileResult),
     Secret(SecretCommandResult),
     RemoteSession(RemoteSessionResult),
@@ -300,6 +360,10 @@ pub enum ResponseBody {
     TransferTaskChunk(TransferTaskChunk),
     TransferPageEnd(TransferPageEnd),
     TransferLocalHandle(TransferLocalHandleGrant),
+    SpeedTestStage(SpeedTestStageData),
+    SpeedTestBasicEnd(Box<SpeedTestBasicEnd>),
+    SpeedTestCancelled(SpeedTestCancelResult),
+    SpeedTestDeep(Box<SpeedTestDeepOutput>),
     Error(DaemonError),
 }
 
@@ -402,6 +466,24 @@ pub struct HealthReport {
     pub health: HealthState,
     pub reason: String,
     pub capabilities: Vec<Capability>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemInfoReport {
+    pub schema_version: u16,
+    pub captured_at_unix_ms: Option<i64>,
+    pub tool_version: Option<String>,
+    pub status: localdesk_domain::CapabilityAvailability,
+    pub reason: String,
+    pub retryable: bool,
+    pub sections: Vec<SystemInfoSection>,
+}
+
+impl SystemInfoReport {
+    pub fn validate(&self) -> bool {
+        self.schema_version == SYSTEM_INFO_SCHEMA_VERSION
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
@@ -539,5 +621,63 @@ impl DaemonError {
             reason: reason.into(),
             retryable,
         }
+    }
+}
+
+/// Deadline for a deep-test command: iperf3 runs each direction for the
+/// requested duration plus margin; the quick commands stay within the
+/// snapshot deadline.
+pub fn speedtest_deep_deadline(command: &SpeedTestDeepCommand) -> Duration {
+    match command {
+        SpeedTestDeepCommand::Iperf3Start {
+            server: _,
+            port: _,
+            direction,
+            duration_secs,
+            parallel: _,
+        } => {
+            let runs = if *direction == localdesk_domain::Iperf3Direction::Bidirectional {
+                2
+            } else {
+                1
+            };
+            let seconds = u64::from(*duration_secs) * runs + 30;
+            Duration::from_secs(seconds.clamp(30, 180))
+        }
+        SpeedTestDeepCommand::Iperf3Stop
+        | SpeedTestDeepCommand::WifiScan
+        | SpeedTestDeepCommand::LinssidLaunch => Duration::from_secs(30),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use localdesk_domain::Iperf3Direction;
+
+    #[test]
+    fn deep_deadline_scales_with_duration_and_directions() {
+        let upload = SpeedTestDeepCommand::Iperf3Start {
+            server: "h".to_owned(),
+            port: 5201,
+            direction: Iperf3Direction::Upload,
+            duration_secs: 10,
+            parallel: 1,
+        };
+        assert_eq!(speedtest_deep_deadline(&upload), Duration::from_secs(40));
+
+        let both = SpeedTestDeepCommand::Iperf3Start {
+            server: "h".to_owned(),
+            port: 5201,
+            direction: Iperf3Direction::Bidirectional,
+            duration_secs: 60,
+            parallel: 1,
+        };
+        assert_eq!(speedtest_deep_deadline(&both), Duration::from_secs(150));
+
+        assert_eq!(
+            speedtest_deep_deadline(&SpeedTestDeepCommand::WifiScan),
+            Duration::from_secs(30)
+        );
     }
 }

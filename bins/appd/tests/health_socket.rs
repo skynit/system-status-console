@@ -15,7 +15,11 @@ mod socket;
 #[allow(dead_code)]
 #[path = "../src/usage.rs"]
 mod usage;
+#[allow(dead_code)]
+#[path = "../src/speedtest.rs"]
+mod speedtest;
 
+use speedtest::SpeedTestHandle;
 use localdesk_domain::{
     APPD_HEALTH_CAPABILITY, CapabilityAvailability, HealthState, TELEMETRY_SNAPSHOT_CAPABILITY,
 };
@@ -62,7 +66,8 @@ async fn health_socket_has_private_runtime_and_dynamic_capabilities() {
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         notes::NotesHandle::unavailable_for_test(),
         RemoteRuntime::unavailable_for_test("remote_fixture_unavailable"),
-        shutdown_rx,
+        SpeedTestHandle::new(),
+                shutdown_rx,
     ));
     let hello = RequestEnvelope::health(
         "test-client",

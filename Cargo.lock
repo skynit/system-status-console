@@ -1969,6 +1969,7 @@ dependencies = [
  "localdesk-remote-ftp",
  "localdesk-remote-smb",
  "localdesk-remote-ssh",
+ "localdesk-systeminfo",
  "localdesk-telemetry",
  "localdesk-telemetry-helper-protocol",
  "localdesk-transfers",
@@ -2022,6 +2023,7 @@ dependencies = [
  "bytes",
  "localdesk-domain",
  "localdesk-remote-core",
+ "localdesk-systeminfo",
  "localdesk-transfers",
  "nix",
  "serde",
@@ -2117,6 +2119,17 @@ dependencies = [
  "localdesk-remote-core",
  "nix",
  "openssh-sftp-client",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "localdesk-systeminfo"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

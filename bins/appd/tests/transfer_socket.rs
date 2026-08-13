@@ -12,7 +12,11 @@ mod service;
 #[allow(dead_code)]
 #[path = "../src/usage.rs"]
 mod usage;
+#[allow(dead_code)]
+#[path = "../src/speedtest.rs"]
+mod speedtest;
 
+use speedtest::SpeedTestHandle;
 use localdesk_ipc::{
     ClientError, RequestEnvelope, TransferLocalHandleBind, request_health, request_remote_profile,
     request_transfer, request_transfer_local_handle,
@@ -201,6 +205,7 @@ impl AppdFixture {
             UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
             notes::NotesHandle::unavailable_for_test(),
             remote,
+            SpeedTestHandle::new(),
             shutdown_rx,
         ));
         Self {

@@ -19,6 +19,7 @@ localdesk-remote-core.workspace = true
 localdesk-remote-ftp.workspace = true
 localdesk-remote-smb.workspace = true
 localdesk-remote-ssh.workspace = true
+localdesk-systeminfo.workspace = true
 localdesk-telemetry.workspace = true
 localdesk-telemetry-helper-protocol.workspace = true
 localdesk-usage.workspace = true

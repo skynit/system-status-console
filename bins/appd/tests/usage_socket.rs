@@ -12,7 +12,11 @@ mod service;
 #[allow(dead_code)]
 #[path = "../src/usage.rs"]
 mod usage;
+#[allow(dead_code)]
+#[path = "../src/speedtest.rs"]
+mod speedtest;
 
+use speedtest::SpeedTestHandle;
 use localdesk_domain::{
     CapabilityAvailability, USAGE_FOREGROUND_CAPABILITY, UsagePeriod, UsageSummaryQuery,
 };
@@ -43,7 +47,8 @@ async fn unavailable_usage_worker_is_typed_in_health_and_summary_requests() {
         usage,
         notes::NotesHandle::unavailable_for_test(),
         RemoteRuntime::unavailable_for_test("remote_fixture_unavailable"),
-        shutdown_rx,
+        SpeedTestHandle::new(),
+                shutdown_rx,
     ));
 
     let health = request_health(

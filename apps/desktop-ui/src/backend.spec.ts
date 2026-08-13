@@ -20,6 +20,7 @@ import {
   getNetworkSnapshot,
   getRemoteAdapterCatalog,
   getRemoteProfiles,
+  getSystemInfo,
   getTelemetrySnapshot,
   getUsageSummary,
   getTransfer,
@@ -644,6 +645,111 @@ describe('getUsageSummary', () => {
     })
     expect(mockedInvoke).not.toHaveBeenCalled()
   })
+
+describe('getSystemInfo', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    delete window.__TAURI__
+    delete window.__TAURI_INTERNALS__
+  })
+
+  it('normalizes a healthy report with sections and groups', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    mockedInvoke.mockResolvedValue({
+      schema_version: 1,
+      captured_at_unix_ms: 1_784_000_000_000,
+      tool_version: 'fastfetch 2.67.0 (x86_64)',
+      status: 'healthy',
+      reason: 'fastfetch_ok',
+      retryable: false,
+      sections: [
+        {
+          id: 'OS',
+          groups: [{ entries: [{ key: 'os_name', value: 'CachyOS Linux' }] }],
+        },
+      ],
+    })
+
+    const result = await getSystemInfo()
+
+    expect(result).toEqual({
+      kind: 'systemInfo',
+      report: {
+        schemaVersion: 1,
+        capturedAtUnixMs: 1_784_000_000_000,
+        toolVersion: 'fastfetch 2.67.0 (x86_64)',
+        status: 'healthy',
+        reason: 'fastfetch_ok',
+        retryable: false,
+        sections: [
+          {
+            id: 'OS',
+            groups: [{ title: null, entries: [{ key: 'os_name', value: 'CachyOS Linux' }] }],
+          },
+        ],
+      },
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('system_info')
+  })
+
+  it('preserves a group title for multi-device sections', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    mockedInvoke.mockResolvedValue({
+      schema_version: 1,
+      captured_at_unix_ms: null,
+      tool_version: null,
+      status: 'healthy',
+      reason: 'fastfetch_ok',
+      retryable: false,
+      sections: [
+        {
+          id: 'GPU',
+          groups: [{ title: 'NVIDIA RTX 4070', entries: [{ key: 'driver', value: 'nvidia' }] }],
+        },
+      ],
+    })
+
+    const result = await getSystemInfo()
+
+    expect(result).toMatchObject({
+      kind: 'systemInfo',
+      report: {
+        sections: [{ id: 'GPU', groups: [{ title: 'NVIDIA RTX 4070' }] }],
+      },
+    })
+  })
+
+  it('rejects a report with malformed entries', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    mockedInvoke.mockResolvedValue({
+      schema_version: 1,
+      captured_at_unix_ms: null,
+      tool_version: null,
+      status: 'healthy',
+      reason: 'fastfetch_ok',
+      retryable: false,
+      sections: [
+        {
+          id: 'OS',
+          groups: [{ entries: [{ key: '', value: 'CachyOS Linux' }] }],
+        },
+      ],
+    })
+
+    await expect(getSystemInfo()).resolves.toMatchObject({
+      kind: 'error',
+      error: { code: 'invalid_system_info_report', retryable: false },
+    })
+  })
+
+  it('returns a factual transport error outside Tauri', async () => {
+    await expect(getSystemInfo()).resolves.toMatchObject({
+      kind: 'error',
+      error: { code: 'desktop_bridge_unavailable', retryable: true },
+    })
+    expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+})
 
 function noteSummaryPayload(overrides: Record<string, unknown> = {}) {
   return {

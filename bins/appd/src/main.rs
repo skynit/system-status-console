@@ -3,6 +3,7 @@ mod notes;
 mod remote;
 mod service;
 mod socket;
+mod speedtest;
 mod task_join;
 mod telemetry;
 mod usage;
@@ -13,6 +14,7 @@ use localdesk_telemetry::TelemetryManager;
 use network::{NetworkHelperCollector, NetworkSupervisor};
 use notes::{NotesHandle, NotesSupervisor};
 use remote::RemoteRuntime;
+use speedtest::SpeedTestHandle;
 use std::{path::Path, process::ExitCode, time::Duration};
 use task_join::{abort_task, drain_task};
 use telemetry::{ChildReaper, TelemetrySupervisor, store_config};
@@ -61,6 +63,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let notes_handle = notes_supervisor.handle();
     let remote_runtime = RemoteRuntime::from_environment();
     remote_runtime.start_transfer_runner().await;
+    let speedtest_handle = SpeedTestHandle::new();
     let bound = socket::bind_appd_socket(&runtime_dir).await?;
     let socket_path = bound.path.clone();
 
@@ -77,6 +80,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         usage_handle,
         notes_handle.clone(),
         remote_runtime.clone(),
+        speedtest_handle,
         ipc_shutdown_rx,
     ));
     let mut telemetry_task = tokio::spawn(supervisor.run(telemetry_shutdown_rx, kill_ack_tx));

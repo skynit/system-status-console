@@ -117,7 +117,11 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             commands::transfer_pick_upload_source,
             commands::transfer_resolve_conflict,
             commands::transfer_retry,
+            commands::speedtest_basic,
+            commands::speedtest_cancel,
+            commands::speedtest_deep,
             commands::usage_summary,
+            commands::system_info,
         ])
         .run(context)
         .expect("error while running localdesk-desktop");

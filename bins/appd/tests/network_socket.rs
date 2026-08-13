@@ -12,7 +12,11 @@ mod service;
 #[allow(dead_code)]
 #[path = "../src/usage.rs"]
 mod usage;
+#[allow(dead_code)]
+#[path = "../src/speedtest.rs"]
+mod speedtest;
 
+use speedtest::SpeedTestHandle;
 use localdesk_domain::{
     CapabilityAvailability, NETWORK_PER_APP_CAPABILITY, NETWORK_SCHEMA_VERSION,
     NETWORK_SYSTEM_CAPABILITY,
@@ -48,7 +52,8 @@ async fn real_rtnetlink_snapshot_is_exposed_without_fabricated_per_app_records()
         UsageHandle::unavailable_for_test("usage_fixture_unavailable"),
         notes::NotesHandle::unavailable_for_test(),
         RemoteRuntime::unavailable_for_test("remote_fixture_unavailable"),
-        ipc_shutdown_rx,
+        SpeedTestHandle::new(),
+                ipc_shutdown_rx,
     ));
 
     sleep(Duration::from_millis(100)).await;
