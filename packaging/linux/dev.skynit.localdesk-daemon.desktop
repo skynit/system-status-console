@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=本机控制台后台采集
+Comment=记录本机资源、网络和应用活跃时长
+Exec=/usr/lib/localdesk/localdesk-launcher --daemon-only
+Terminal=false
+NoDisplay=true
+StartupNotify=false

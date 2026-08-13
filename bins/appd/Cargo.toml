@@ -1,0 +1,37 @@
+[package]
+name = "localdesk-appd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "localdesk-appd"
+path = "src/main.rs"
+
+[dependencies]
+localdesk-domain.workspace = true
+localdesk-ipc.workspace = true
+localdesk-network.workspace = true
+localdesk-network-helper-protocol.workspace = true
+localdesk-notes.workspace = true
+localdesk-remote-core.workspace = true
+localdesk-remote-ftp.workspace = true
+localdesk-remote-smb.workspace = true
+localdesk-remote-ssh.workspace = true
+localdesk-telemetry.workspace = true
+localdesk-telemetry-helper-protocol.workspace = true
+localdesk-usage.workspace = true
+localdesk-transfers.workspace = true
+libc.workspace = true
+nix.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

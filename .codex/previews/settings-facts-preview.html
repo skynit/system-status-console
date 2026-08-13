@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本机控制台 · 设置预览</title>
+<style>
+  :root {
+    --white: #ffffff;
+    --pale: #f5f5f5;
+    --rule: rgba(26, 27, 31, 0.24);
+    --rule-subtle: rgba(26, 27, 31, 0.12);
+    --ink: #1a1b1f;
+    --muted: #66686d;
+    --blue: #2f23f2;
+    --coral: #ff7358;
+    --success: #007c6a;
+    --warning: #c23d26;
+    --danger: #c23d26;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--white);
+    color: var(--ink);
+    font-family: "Instrument Sans Condensed", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    letter-spacing: 0;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--white);
+  }
+  .brand { font-weight: 700; letter-spacing: 0.08em; }
+  .brand em { color: var(--blue); font-style: normal; }
+  .bridge {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--muted);
+  }
+  .bridge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+  .bridge strong { color: var(--ink); font-family: "Space Mono", ui-monospace, monospace; }
+
+  .page {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 36px 28px 48px;
+  }
+  .page-heading { margin-bottom: 28px; }
+  .eyebrow {
+    margin: 0 0 4px;
+    font-size: 12px; font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  h1 { margin: 0 0 6px; font-size: 28px; font-weight: 700; line-height: 1.2; }
+  .page-description { margin: 0; color: var(--muted); font-size: 14px; }
+
+  .group { margin-bottom: 32px; }
+  .group-title {
+    display: flex; align-items: baseline; gap: 12px;
+    padding-bottom: 10px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .group-title strong { font-size: 16px; font-weight: 700; }
+  .group-title small { color: var(--muted); font-size: 12px; }
+
+  .row {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.85fr) minmax(96px, auto) minmax(240px, 1.2fr);
+    align-items: center;
+    gap: 12px 16px;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--rule-subtle);
+    min-width: 0;
+  }
+  .row:last-child { border-bottom: 0; }
+  .row-name { font-size: 14px; font-weight: 600; }
+  .row-name small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .row-reason {
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+  }
+  .token {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 12px; font-weight: 600;
+    justify-self: start;
+  }
+  .token::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .is-healthy { color: var(--success); }
+  .is-degraded { color: var(--warning); }
+  .is-unsupported { color: var(--muted); }
+  .is-unreachable { color: var(--danger); }
+
+  .fact-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 32px;
+  }
+  .fact { display: flex; align-items: baseline; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--rule-subtle); min-width: 0; }
+  .fact dt { color: var(--muted); font-size: 13px; flex: 0 0 110px; }
+  .fact dd { margin: 0; font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .fact dd code { font-family: "Space Mono", ui-monospace, monospace; font-weight: 400; color: var(--muted); font-size: 12px; }
+
+  .note { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; border: 1px solid var(--rule); border-radius: 12px; background: var(--pale); font-size: 13px; color: var(--muted); margin-top: 16px; }
+  .note strong { color: var(--ink); }
+
+  @media (max-width: 1000px) {
+    .page { padding: 24px 16px 40px; }
+    .row { grid-template-columns: minmax(140px, 1fr) auto; }
+    .row-reason { grid-column: 1 / -1; }
+    .fact-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">ULTRAMARINE CONTROL FIELD <em>+ H</em></div>
+    <div class="bridge"><span class="dot"></span>桌面桥接 <strong>healthy</strong></div>
+  </header>
+
+  <main class="page">
+    <header class="page-heading">
+      <p class="eyebrow">本机管理</p>
+      <h1>设置</h1>
+      <p class="page-description">查看本机控制台的运行事实与配置边界。当前版本提供状态查看；配置项接口尚未开放，未提供项如实标记。</p>
+    </header>
+
+    <section class="group" aria-label="系统状态">
+      <div class="group-title"><strong>系统状态</strong><small>appd 与采集能力</small></div>
+      <div class="row"><span class="row-name">appd 服务</span><span class="token is-healthy">healthy</span><code class="row-reason">appd_online</code></div>
+      <div class="row"><span class="row-name">应用资源采集<small>CPU、内存与文件句柄</small></span><span class="token is-degraded">degraded</span><code class="row-reason">telemetry_partial</code></div>
+      <div class="row"><span class="row-name">系统网络<small>接口、计数器与实时速率</small></span><span class="token is-healthy">healthy</span><code class="row-reason">rtnetlink_system_counters_available</code></div>
+      <div class="row"><span class="row-name">按应用流量<small>各应用收发流量与占比</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">unprivileged_bpf_permanently_disabled</code></div>
+      <div class="row"><span class="row-name">使用时间<small>每日与每周前台使用时长</small></span><span class="token is-healthy">healthy</span><code class="row-reason">usage_tracking_active</code></div>
+    </section>
+
+    <section class="group" aria-label="远程连接">
+      <div class="group-title"><strong>远程连接</strong><small>SSH 终端与文件能力</small></div>
+      <div class="row"><span class="row-name">SSH<small>OpenSSH 终端与主机信任</small></span><span class="token is-healthy">healthy</span><code class="row-reason">remote_adapter_available</code></div>
+      <div class="row"><span class="row-name">SFTP<small>基于 SSH 的远程文件操作</small></span><span class="token is-healthy">healthy</span><code class="row-reason">remote_adapter_available</code></div>
+      <div class="row"><span class="row-name">FTP / FTPS<small>明文 FTP 需显式确认</small></span><span class="token is-degraded">degraded</span><code class="row-reason">plain_ftp_explicitly_enabled</code></div>
+      <div class="row"><span class="row-name">SMB2/3<small>SMB 文件能力与诊断边界</small></span><span class="token is-healthy">healthy</span><code class="row-reason">remote_adapter_available</code></div>
+    </section>
+
+    <section class="group" aria-label="数据与队列">
+      <div class="group-title"><strong>数据与队列</strong><small>本地持久化服务</small></div>
+      <div class="row"><span class="row-name">传输队列<small>可恢复上传、下载与冲突处理</small></span><span class="token is-healthy">healthy</span><code class="row-reason">transfer_runner_active_public_commands_available</code></div>
+      <div class="row"><span class="row-name">备忘录<small>日记和列表共享的本地实体</small></span><span class="token is-healthy">healthy</span><code class="row-reason">notes_ready</code></div>
+    </section>
+
+    <section class="group" aria-label="使用时间口径">
+      <div class="group-title"><strong>使用时间口径</strong><small>统计事实</small></div>
+      <dl class="fact-grid">
+        <div class="fact"><dt>统计始于</dt><dd>2026-08-12 16:33:30</dd></div>
+        <div class="fact"><dt>当日覆盖</dt><dd>degraded <code>usage_historical_gaps_present</code></dd></div>
+        <div class="fact"><dt>计时口径</dt><dd>窗口处于前台聚焦、会话已解锁，且最近 5 分钟内有输入</dd></div>
+        <div class="fact"><dt>周期起点覆盖</dt><dd>已覆盖完整周期起点</dd></div>
+        <div class="fact"><dt>niri 事件流</dt><dd>connected</dd></div>
+        <div class="fact"><dt>logind 会话</dt><dd>available</dd></div>
+      </dl>
+    </section>
+
+    <section class="group" aria-label="配置项">
+      <div class="group-title"><strong>配置项</strong><small>当前版本未提供配置界面</small></div>
+      <div class="row"><span class="row-name">采集周期<small>采样间隔为版本固定值</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+      <div class="row"><span class="row-name">数据保留期<small>各存储使用版本固定策略</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+      <div class="row"><span class="row-name">通知<small>应用内状态为事实来源</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+      <div class="row"><span class="row-name">快捷键<small>Wayland 会话不提供全局快捷键</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+      <div class="row"><span class="row-name">隐私偏好<small>数据边界为版本固定事实</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+      <div class="row"><span class="row-name">远程连接默认值<small>各连接在表单中独立配置</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+    </section>
+
+    <div class="note">
+      <strong>说明</strong>
+      <span>本页所有状态与 reason 均来自后端实时事实。可配置项（采集、保留期、通知、快捷键、隐私、远程默认值）将在后端提供设置契约后分批开放，届时本页对应行转为可操作控件。</span>
+    </div>
+  </main>
+</body>
+</html>

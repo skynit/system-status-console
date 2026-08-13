@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">本机控制台图标候选</title>
+  <desc id="desc">深色圆角方形中的蓝色本机活动脉冲符号</desc>
+  <rect x="48" y="48" width="928" height="928" rx="208" fill="#0F141A"/>
+  <rect x="49" y="49" width="926" height="926" rx="207" fill="none" stroke="#2B3947" stroke-width="2"/>
+  <rect x="112" y="112" width="800" height="800" rx="168" fill="#171E26"/>
+  <rect x="113" y="113" width="798" height="798" rx="167" fill="none" stroke="#4D8DFF" stroke-opacity="0.42" stroke-width="4"/>
+  <path d="M160 336 H864" stroke="#2B3947" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="222" cy="244" r="18" fill="#55B98B"/>
+  <circle cx="286" cy="244" r="18" fill="#D2A354"/>
+  <circle cx="350" cy="244" r="18" fill="#E27878"/>
+  <path d="M208 594 H344 L416 438 L512 704 L608 514 H816" fill="none" stroke="#4D8DFF" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M208 594 H344 L416 438 L512 704 L608 514 H816" fill="none" stroke="#A9C7FF" stroke-opacity="0.24" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本机控制台 · 设置预览（系统信息）v3</title>
+<style>
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-600.ttf") format("truetype"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "Space Mono"; src: url("../../apps/desktop-ui/src/assets/fonts/space-mono-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Space Mono"; src: url("../../apps/desktop-ui/src/assets/fonts/space-mono-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  :root {
+    --white: #ffffff;
+    --pale: #f5f5f5;
+    --rule: rgba(26, 27, 31, 0.24);
+    --rule-subtle: rgba(26, 27, 31, 0.12);
+    --ink: #1a1b1f;
+    --muted: #66686d;
+    --blue: #2f23f2;
+    --turquoise: #2ffedd;
+    --lavender: #bb94ff;
+    --success: #007c6a;
+    --warning: #c23d26;
+    --danger: #c23d26;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--white);
+    color: var(--ink);
+    font-family: "Instrument Sans Condensed", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.45;
+    letter-spacing: 0;
+  }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 64px;
+    padding: 0 28px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--white);
+  }
+  .brand { font-weight: 700; letter-spacing: 0.08em; font-size: 14px; }
+  .brand em { color: var(--blue); font-style: normal; }
+  .bridge { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .bridge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+  .bridge strong { color: var(--ink); font-family: "Space Mono", ui-monospace, monospace; font-weight: 700; }
+
+  .route-banner {
+    display: flex;
+    min-height: 170px;
+    align-items: flex-end;
+    gap: 24px;
+    padding: 28px 40px 30px;
+    border-bottom: 1px solid var(--ink);
+    background: var(--white);
+  }
+  .route-index { font-family: "Instrument Serif", Georgia, serif; font-size: 96px; line-height: 0.75; color: var(--ink); }
+  .route-banner > div { display: grid; align-content: end; }
+  .route-name { font-size: 56px; font-weight: 700; line-height: 0.95; }
+  .route-english { margin-top: 8px; color: var(--blue); font-family: "Space Mono", ui-monospace, monospace; font-size: 10px; }
+
+  .settings-console { display: grid; grid-template-rows: 70px minmax(0, 1fr); background: var(--white); }
+
+  .settings-tabs {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 28px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--white);
+  }
+  .settings-tab {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 24px;
+    background: transparent;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .settings-tab:hover:not(.is-active) { background: var(--turquoise); color: var(--ink); }
+  .settings-tab.is-active { background: var(--lavender); color: var(--ink); }
+  .settings-refresh {
+    width: 44px;
+    height: 44px;
+    margin-left: auto;
+    flex: 0 0 auto;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    background: var(--white);
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .settings-workspace {
+    min-width: 0;
+    overflow-y: auto;
+    padding: 24px 32px 40px;
+  }
+
+  .sysinfo-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .sysinfo-meta .token { margin-left: auto; }
+
+  .sys-pairs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px 56px;
+    align-items: start;
+  }
+  .sys-block { min-width: 0; }
+  .sys-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding-bottom: 8px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .sys-title strong { font-size: 17px; font-weight: 700; line-height: 1.2; }
+  .sys-title small { color: var(--muted); font-size: 12px; font-family: "Space Mono", ui-monospace, monospace; }
+
+  .srow {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 8px 2px;
+    border-bottom: 1px solid var(--rule-subtle);
+    min-width: 0;
+  }
+  .srow:last-child { border-bottom: 0; }
+  .srow-label { flex: 0 0 84px; color: var(--muted); font-size: 14px; min-width: 0; }
+  .srow-value {
+    min-width: 0;
+    color: var(--ink);
+    font-size: 15px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .token {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .token::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .is-healthy { color: var(--success); }
+  .meta-reason { font-family: "Space Mono", ui-monospace, monospace; font-size: 13px; color: var(--muted); }
+
+  @media (max-width: 1000px) {
+    .settings-tabs { padding: 8px 16px; }
+    .settings-tab { padding: 0 14px; }
+    .settings-workspace { padding: 20px 16px 32px; }
+    .sys-pairs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 32px; }
+    .srow-label { flex-basis: 76px; }
+  }
+  @media (max-width: 760px) {
+    .sys-pairs { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">ULTRAMARINE CONTROL FIELD <em>+ H</em></div>
+    <div class="bridge"><span class="dot"></span>桌面桥接 <strong>healthy</strong></div>
+  </header>
+
+  <div class="route-banner">
+    <span class="route-index">07</span>
+    <div>
+      <span class="route-name">设置</span>
+      <span class="route-english">SETTINGS</span>
+    </div>
+  </div>
+
+  <section class="settings-console">
+    <h1 class="sr-only">设置</h1>
+
+    <div class="settings-tabs" role="tablist" aria-label="设置视图">
+      <button class="settings-tab" role="tab" aria-selected="false" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg>
+        <span>应用设置</span>
+      </button>
+      <button class="settings-tab is-active" role="tab" aria-selected="true" tabindex="0">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <span>系统信息</span>
+      </button>
+      <button class="settings-refresh" aria-label="刷新系统信息" title="刷新系统信息">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+      </button>
+    </div>
+
+    <div class="settings-workspace">
+      <div class="sysinfo-meta">
+        <span>fastfetch 2.67.0 (x86_64)</span>
+        <span>·</span>
+        <span>采集于 2026-08-14 01:38:51</span>
+        <span class="token is-healthy">healthy</span>
+        <code class="meta-reason">fastfetch_ok</code>
+      </div>
+
+      <div class="sys-pairs">
+        <section class="sys-block" aria-label="操作系统">
+          <div class="sys-title"><strong>操作系统</strong><small>OS</small></div>
+          <div class="srow"><span class="srow-label">名称</span><span class="srow-value">CachyOS Linux</span></div>
+          <div class="srow"><span class="srow-label">版本</span><span class="srow-value">rolling · cachyos</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="主机">
+          <div class="sys-title"><strong>主机</strong><small>Host</small></div>
+          <div class="srow"><span class="srow-label">厂商</span><span class="srow-value">LENOVO</span></div>
+          <div class="srow"><span class="srow-label">型号</span><span class="srow-value">ThinkBook 14 G8+ AGP (21VB)</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="内核">
+          <div class="sys-title"><strong>内核</strong><small>Kernel</small></div>
+          <div class="srow"><span class="srow-label">内核</span><span class="srow-value">7.1.6-1-cachyos · x86_64</span></div>
+          <div class="srow"><span class="srow-label">构建</span><span class="srow-value">#1 SMP PREEMPT_DYNAMIC Mon, 03 Aug 2026 16:03:35 +0000</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="运行时间">
+          <div class="sys-title"><strong>运行时间</strong><small>Uptime</small></div>
+          <div class="srow"><span class="srow-label">运行时长</span><span class="srow-value">1 年 11 个月</span></div>
+          <div class="srow"><span class="srow-label">启动时间</span><span class="srow-value">2026-08-13 08:26:29 (+0800)</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="软件包">
+          <div class="sys-title"><strong>软件包</strong><small>Packages</small></div>
+          <div class="srow"><span class="srow-label">软件包</span><span class="srow-value">1783 pacman · 5 flatpak（合计 1788）</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="Shell">
+          <div class="sys-title"><strong>Shell</strong><small>Shell</small></div>
+          <div class="srow"><span class="srow-label">Shell</span><span class="srow-value">bash · 5.3.15</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="窗口管理器">
+          <div class="sys-title"><strong>窗口管理器</strong><small>WM</small></div>
+          <div class="srow"><span class="srow-label">WM</span><span class="srow-value">niri · 26.04 · Wayland</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="显示器">
+          <div class="sys-title"><strong>显示器</strong><small>Display</small></div>
+          <div class="srow"><span class="srow-label">显示器</span><span class="srow-value">MNE507ZA2-4 · 3072×1920 @ 60 Hz · dpi 168 · Builtin · HDR</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="处理器">
+          <div class="sys-title"><strong>处理器</strong><small>CPU</small></div>
+          <div class="srow"><span class="srow-label">型号</span><span class="srow-value">AMD Ryzen AI 7 H 450</span></div>
+          <div class="srow"><span class="srow-label">核心</span><span class="srow-value">8 物理 / 16 逻辑</span></div>
+          <div class="srow"><span class="srow-label">频率</span><span class="srow-value">2.0 GHz · x86_64-v4</span></div>
+          <div class="srow"><span class="srow-label">代号</span><span class="srow-value">Ryzen AI 7 (Krackan Point) · TSMC N4P</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="磁盘">
+          <div class="sys-title"><strong>磁盘</strong><small>Disk</small></div>
+          <div class="srow"><span class="srow-label">设备</span><span class="srow-value">/dev/nvme0n1p2 · btrfs</span></div>
+          <div class="srow"><span class="srow-label">挂载</span><span class="srow-value">/、/home、/root、/srv、/var/cache、/var/log、/var/tmp</span></div>
+          <div class="srow"><span class="srow-label">用量</span><span class="srow-value">320.9 GiB / 953.4 GiB (34%) · 可用 627.3 GiB</span></div>
+          <div class="srow"><span class="srow-label">创建时间</span><span class="srow-value">2026-07-31 00:05:07 (+0800)</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="显卡">
+          <div class="sys-title"><strong>显卡</strong><small>GPU</small></div>
+          <div class="srow"><span class="srow-label">显卡</span><span class="srow-value">AMD Radeon 860M Graphics</span></div>
+          <div class="srow"><span class="srow-label">驱动</span><span class="srow-value">amdgpu · Integrated · DRM (card1)</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="电池">
+          <div class="sys-title"><strong>电池</strong><small>Battery</small></div>
+          <div class="srow"><span class="srow-label">电量</span><span class="srow-value">93% · AC Connected, Charging</span></div>
+          <div class="srow"><span class="srow-label">电池</span><span class="srow-value">BYD L25B4PE3 · Li-ion · 7 次循环</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="内存">
+          <div class="sys-title"><strong>内存</strong><small>Memory</small></div>
+          <div class="srow"><span class="srow-label">内存</span><span class="srow-value">17.1 GiB / 30.5 GiB (56%)</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="交换空间">
+          <div class="sys-title"><strong>交换空间</strong><small>Swap</small></div>
+          <div class="srow"><span class="srow-label">交换</span><span class="srow-value">/dev/zram0 · 5.4 GiB / 30.5 GiB (18%)</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="本机地址">
+          <div class="sys-title"><strong>本机地址</strong><small>LocalIp</small></div>
+          <div class="srow"><span class="srow-label">地址</span><span class="srow-value">Mihomo · 198.18.0.1/30</span></div>
+        </section>
+
+        <section class="sys-block" aria-label="区域设置">
+          <div class="sys-title"><strong>区域设置</strong><small>Locale</small></div>
+          <div class="srow"><span class="srow-label">区域</span><span class="srow-value">zh_CN.UTF-8</span></div>
+        </section>
+      </div>
+    </div>
+  </section>
+</body>
+</html>

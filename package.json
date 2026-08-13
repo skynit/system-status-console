@@ -1,0 +1,8 @@
+{
+  "name": "localdesk-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.mjs"
+  },
+  "packageManager": "pnpm@11.3.0"
+}

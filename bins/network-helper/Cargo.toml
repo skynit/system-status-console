@@ -1,0 +1,19 @@
+[package]
+name = "localdesk-network-helper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "localdesk-network-helper"
+path = "src/main.rs"
+
+[dependencies]
+libbpf-rs.workspace = true
+localdesk-network.workspace = true
+localdesk-network-helper-protocol.workspace = true
+nix.workspace = true
+
+[build-dependencies]
+libbpf-cargo.workspace = true

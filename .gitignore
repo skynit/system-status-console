@@ -1,0 +1,17 @@
+/target/
+**/target/
+node_modules/
+dist/
+**/src-tauri/target/
+**/src-tauri/gen/
+**/.vite/
+**/.turbo/
+
+# Codex session artifacts (large QA/build outputs)
+.codex/portable-target/
+.codex/artifacts/
+.codex/artifacts-portable/
+.codex/runtime-qa/
+.codex/runtime-captures/
+.codex/usability-qa/
+.codex/vm/

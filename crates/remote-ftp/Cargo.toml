@@ -1,0 +1,20 @@
+[package]
+name = "localdesk-remote-ftp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+curl.workspace = true
+curl-sys.workspace = true
+localdesk-remote-core.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

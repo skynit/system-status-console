@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=本机控制台
+Comment=本机运维与远程文件控制台
+Exec=/usr/lib/localdesk/localdesk-launcher
+Icon=dev.skynit.localdesk
+Terminal=false
+Categories=System;FileTools;
+StartupNotify=true
+StartupWMClass=dev.skynit.localdesk

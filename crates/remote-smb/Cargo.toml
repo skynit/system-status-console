@@ -1,0 +1,18 @@
+[package]
+name = "localdesk-remote-smb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "System-first libsmbclient SMB2/3 adapter for LocalDesk"
+
+[dependencies]
+libc.workspace = true
+libloading.workspace = true
+localdesk-remote-core.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

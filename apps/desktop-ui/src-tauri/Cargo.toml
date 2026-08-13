@@ -1,0 +1,39 @@
+[package]
+name = "localdesk-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "localdesk_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "localdesk-desktop"
+path = "src/main.rs"
+
+[[bin]]
+name = "localdesk-launcher"
+path = "src/bin/localdesk-launcher.rs"
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+base64.workspace = true
+localdesk-domain.workspace = true
+localdesk-ipc.workspace = true
+localdesk-remote-core.workspace = true
+localdesk-transfers.workspace = true
+nix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tauri.workspace = true
+tauri-plugin-dialog.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,14 @@
+[package]
+name = "localdesk-telemetry-helper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "localdesk-telemetry-helper"
+path = "src/main.rs"
+
+[dependencies]
+localdesk-telemetry.workspace = true
+localdesk-telemetry-helper-protocol.workspace = true

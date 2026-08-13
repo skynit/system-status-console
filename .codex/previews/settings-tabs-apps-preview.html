@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本机控制台 · 设置预览（应用设置）v2</title>
+<style>
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-600.ttf") format("truetype"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "Space Mono"; src: url("../../apps/desktop-ui/src/assets/fonts/space-mono-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Space Mono"; src: url("../../apps/desktop-ui/src/assets/fonts/space-mono-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  :root {
+    --white: #ffffff;
+    --pale: #f5f5f5;
+    --rule: rgba(26, 27, 31, 0.24);
+    --rule-subtle: rgba(26, 27, 31, 0.12);
+    --ink: #1a1b1f;
+    --muted: #66686d;
+    --blue: #2f23f2;
+    --turquoise: #2ffedd;
+    --lavender: #bb94ff;
+    --success: #007c6a;
+    --warning: #c23d26;
+    --danger: #c23d26;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--white);
+    color: var(--ink);
+    font-family: "Instrument Sans Condensed", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.45;
+    letter-spacing: 0;
+  }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 64px;
+    padding: 0 28px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--white);
+  }
+  .brand { font-weight: 700; letter-spacing: 0.08em; font-size: 14px; }
+  .brand em { color: var(--blue); font-style: normal; }
+  .bridge { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .bridge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+  .bridge strong { color: var(--ink); font-family: "Space Mono", ui-monospace, monospace; font-weight: 700; }
+
+  .route-banner {
+    display: flex;
+    min-height: 170px;
+    align-items: flex-end;
+    gap: 24px;
+    padding: 28px 40px 30px;
+    border-bottom: 1px solid var(--ink);
+    background: var(--white);
+  }
+  .route-index { font-family: "Instrument Serif", Georgia, serif; font-size: 96px; line-height: 0.75; color: var(--ink); }
+  .route-banner > div { display: grid; align-content: end; }
+  .route-name { font-size: 56px; font-weight: 700; line-height: 0.95; }
+  .route-english { margin-top: 8px; color: var(--blue); font-family: "Space Mono", ui-monospace, monospace; font-size: 10px; }
+
+  .settings-console { display: grid; grid-template-rows: 70px minmax(0, 1fr); background: var(--white); }
+
+  .settings-tabs {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 28px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--white);
+  }
+  .settings-tab {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 24px;
+    background: transparent;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .settings-tab:hover:not(.is-active) { background: var(--turquoise); color: var(--ink); }
+  .settings-tab.is-active { background: var(--lavender); color: var(--ink); }
+  .settings-refresh {
+    width: 44px;
+    height: 44px;
+    margin-left: auto;
+    flex: 0 0 auto;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    background: var(--white);
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .settings-workspace {
+    min-width: 0;
+    overflow-y: auto;
+    padding: 24px 32px 40px;
+  }
+
+  .settings-desc {
+    margin: 0 0 22px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+    max-width: 760px;
+  }
+
+  .group { margin-bottom: 28px; }
+  .group-title {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding-bottom: 10px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .group-title strong { font-size: 17px; font-weight: 700; line-height: 1.2; }
+  .group-title small { color: var(--muted); font-size: 13px; }
+
+  .row {
+    display: grid;
+    grid-template-columns: minmax(220px, 320px) minmax(100px, 140px) minmax(0, 1fr);
+    align-items: center;
+    gap: 12px 16px;
+    padding: 11px 4px;
+    border-bottom: 1px solid var(--rule-subtle);
+    min-width: 0;
+  }
+  .row:last-child { border-bottom: 0; }
+  .row-name { font-size: 15px; font-weight: 600; min-width: 0; }
+  .row-name small { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
+  .row-reason {
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 13px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .token {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    justify-self: start;
+    white-space: nowrap;
+  }
+  .token::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .is-healthy { color: var(--success); }
+  .is-degraded { color: var(--warning); }
+  .is-unsupported { color: var(--muted); }
+  .is-unreachable { color: var(--danger); }
+
+  .fact-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0 28px;
+  }
+  .fact { display: flex; align-items: baseline; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--rule-subtle); min-width: 0; }
+  .fact dt { color: var(--muted); font-size: 14px; flex: 0 0 96px; }
+  .fact dd { margin: 0; font-size: 14px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fact dd code { font-family: "Space Mono", ui-monospace, monospace; font-weight: 400; color: var(--muted); font-size: 12.5px; }
+  .fact-wide { grid-column: 1 / -1; }
+  .fact-wide dd { overflow: visible; white-space: normal; text-overflow: clip; }
+
+  .note { display: flex; gap: 10px; align-items: flex-start; padding: 13px 16px; border: 1px solid var(--rule); border-radius: 12px; background: var(--pale); font-size: 14px; color: var(--muted); }
+  .note strong { color: var(--ink); }
+
+  @media (max-width: 1000px) {
+    .settings-tabs { padding: 8px 16px; }
+    .settings-tab { padding: 0 14px; }
+    .settings-workspace { padding: 20px 16px 32px; }
+    .row { grid-template-columns: minmax(150px, 1fr) auto; }
+    .row-reason { grid-column: 1 / -1; }
+    .fact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .fact-wide { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">ULTRAMARINE CONTROL FIELD <em>+ H</em></div>
+    <div class="bridge"><span class="dot"></span>桌面桥接 <strong>healthy</strong></div>
+  </header>
+
+  <div class="route-banner">
+    <span class="route-index">07</span>
+    <div>
+      <span class="route-name">设置</span>
+      <span class="route-english">SETTINGS</span>
+    </div>
+  </div>
+
+  <section class="settings-console">
+    <h1 class="sr-only">设置</h1>
+
+    <div class="settings-tabs" role="tablist" aria-label="设置视图">
+      <button class="settings-tab is-active" role="tab" aria-selected="true" tabindex="0">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg>
+        <span>应用设置</span>
+      </button>
+      <button class="settings-tab" role="tab" aria-selected="false" tabindex="-1">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <span>系统信息</span>
+      </button>
+      <button class="settings-refresh" aria-label="刷新设置事实" title="刷新设置事实">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+      </button>
+    </div>
+
+    <div class="settings-workspace">
+      <p class="settings-desc">查看本机控制台的运行事实与配置边界。当前版本提供状态查看；配置项接口尚未开放，未提供项如实标记。</p>
+
+      <section class="group" aria-label="系统状态">
+        <div class="group-title"><strong>系统状态</strong><small>appd 与采集能力</small></div>
+        <div class="row"><span class="row-name">appd 服务</span><span class="token is-healthy">healthy</span><code class="row-reason">appd_online</code></div>
+        <div class="row"><span class="row-name">应用资源采集<small>CPU、内存与文件句柄</small></span><span class="token is-degraded">degraded</span><code class="row-reason">telemetry_partial</code></div>
+        <div class="row"><span class="row-name">系统网络<small>接口、计数器与实时速率</small></span><span class="token is-healthy">healthy</span><code class="row-reason">rtnetlink_system_counters_available</code></div>
+        <div class="row"><span class="row-name">按应用流量<small>各应用收发流量与占比</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">unprivileged_bpf_permanently_disabled</code></div>
+        <div class="row"><span class="row-name">使用时间<small>每日与每周前台使用时长</small></span><span class="token is-healthy">healthy</span><code class="row-reason">usage_tracking_active</code></div>
+      </section>
+
+      <section class="group" aria-label="远程连接">
+        <div class="group-title"><strong>远程连接</strong><small>SSH 终端与文件能力</small></div>
+        <div class="row"><span class="row-name">SSH<small>OpenSSH 终端与主机信任</small></span><span class="token is-healthy">healthy</span><code class="row-reason">remote_adapter_available</code></div>
+        <div class="row"><span class="row-name">SFTP<small>基于 SSH 的远程文件操作</small></span><span class="token is-healthy">healthy</span><code class="row-reason">remote_adapter_available</code></div>
+        <div class="row"><span class="row-name">FTP / FTPS<small>明文 FTP 需显式确认</small></span><span class="token is-degraded">degraded</span><code class="row-reason">plain_ftp_explicitly_enabled</code></div>
+        <div class="row"><span class="row-name">SMB2/3<small>SMB 文件能力与诊断边界</small></span><span class="token is-healthy">healthy</span><code class="row-reason">remote_adapter_available</code></div>
+      </section>
+
+      <section class="group" aria-label="数据与队列">
+        <div class="group-title"><strong>数据与队列</strong><small>本地持久化服务</small></div>
+        <div class="row"><span class="row-name">传输队列<small>可恢复上传、下载与冲突处理</small></span><span class="token is-healthy">healthy</span><code class="row-reason">transfer_runner_active_public_commands_available</code></div>
+        <div class="row"><span class="row-name">备忘录<small>日记和列表共享的本地实体</small></span><span class="token is-healthy">healthy</span><code class="row-reason">notes_ready</code></div>
+      </section>
+
+      <section class="group" aria-label="使用时间口径">
+        <div class="group-title"><strong>使用时间口径</strong><small>统计事实</small></div>
+        <dl class="fact-grid">
+          <div class="fact"><dt>统计始于</dt><dd>2026-08-12 16:33:30</dd></div>
+          <div class="fact"><dt>当日覆盖</dt><dd>degraded <code>usage_historical_gaps_present</code></dd></div>
+          <div class="fact"><dt>周期起点覆盖</dt><dd>已覆盖完整周期起点</dd></div>
+          <div class="fact"><dt>niri 事件流</dt><dd>connected</dd></div>
+          <div class="fact"><dt>logind 会话</dt><dd>available</dd></div>
+          <div class="fact fact-wide"><dt>计时口径</dt><dd>窗口处于前台聚焦、会话已解锁，且最近 5 分钟内有输入</dd></div>
+        </dl>
+      </section>
+
+      <section class="group" aria-label="配置项">
+        <div class="group-title"><strong>配置项</strong><small>当前版本未提供配置界面</small></div>
+        <div class="row"><span class="row-name">采集周期<small>采样间隔为版本固定值</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+        <div class="row"><span class="row-name">数据保留期<small>各存储使用版本固定策略</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+        <div class="row"><span class="row-name">通知<small>应用内状态为事实来源</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+        <div class="row"><span class="row-name">快捷键<small>Wayland 会话不提供全局快捷键</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+        <div class="row"><span class="row-name">隐私偏好<small>数据边界为版本固定事实</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+        <div class="row"><span class="row-name">远程连接默认值<small>各连接在表单中独立配置</small></span><span class="token is-unsupported">unsupported</span><code class="row-reason">not_implemented</code></div>
+      </section>
+
+      <div class="note">
+        <strong>说明</strong>
+        <span>本页所有状态与 reason 均来自后端实时事实。可配置项（采集、保留期、通知、快捷键、隐私、远程默认值）将在后端提供设置契约后分批开放，届时本页对应行转为可操作控件。</span>
+      </div>
+    </div>
+  </section>
+</body>
+</html>
