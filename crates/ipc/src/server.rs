@@ -108,7 +108,8 @@ pub type TransferLocalHandleProvider =
     Arc<dyn Fn(TransferLocalHandleBind) -> TransferLocalHandleProviderFuture + Send + Sync>;
 pub type SpeedTestProviderFuture =
     Pin<Box<dyn Future<Output = Result<mpsc::Receiver<SpeedTestStreamEvent>, SnapshotProviderError>> + Send + 'static>>;
-pub type SpeedTestProvider = Arc<dyn Fn() -> SpeedTestProviderFuture + Send + Sync>;
+pub type SpeedTestProvider =
+    Arc<dyn Fn(Vec<localdesk_domain::SpeedTestStage>) -> SpeedTestProviderFuture + Send + Sync>;
 pub type SpeedTestCancelProviderFuture =
     Pin<Box<dyn Future<Output = Result<SpeedTestCancelResult, SnapshotProviderError>> + Send + 'static>>;
 pub type SpeedTestCancelProvider = Arc<dyn Fn() -> SpeedTestCancelProviderFuture + Send + Sync>;
@@ -1053,8 +1054,18 @@ async fn handle_connection_inner(
             )
             .await
         }
-        RequestBody::SpeedTestBasic(_) => {
+        RequestBody::SpeedTestBasic(speedtest_request) => {
             let deadline = accepted_at + SPEEDTEST_TOTAL_DEADLINE;
+            if speedtest_request.validate().is_err() {
+                return write_terminal_error(
+                    &mut stream,
+                    request.request_id,
+                    deadline,
+                    DaemonError::new("invalid_request", "speedtest_stages_invalid", false),
+                )
+                .await;
+            }
+            let stages = speedtest_request.stages;
             let Ok(_speedtest_permit) = config.speedtest_permits.clone().try_acquire_owned() else {
                 return write_terminal_error(
                     &mut stream,
@@ -1077,7 +1088,7 @@ async fn handle_connection_inner(
                 )
                 .await;
             };
-            let mut receiver = match timeout_at(deadline, provider()).await {
+            let mut receiver = match timeout_at(deadline, provider(stages)).await {
                 Ok(Ok(receiver)) => receiver,
                 Ok(Err(error)) => {
                     return write_terminal_error(

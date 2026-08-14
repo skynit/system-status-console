@@ -846,6 +846,12 @@ export interface BandwidthMeasurement {
   error: string | null
 }
 
+export interface IpRiskSource {
+  source: string
+  risk: number | null
+  weight: number | null
+}
+
 export interface IpPurityResult {
   source: string
   ip: string | null
@@ -859,6 +865,13 @@ export interface IpPurityResult {
   proxy: boolean | null
   hosting: boolean | null
   mobile: boolean | null
+  riskScore: number | null
+  ipType: string | null
+  signals: string[]
+  riskSources: IpRiskSource[]
+  blocklistChecked: number | null
+  blocklistListed: string[]
+  riskError: string | null
   error: string | null
 }
 

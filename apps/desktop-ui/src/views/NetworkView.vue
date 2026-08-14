@@ -41,7 +41,7 @@ import type {
 
 type NetworkTab = 'interfaces' | 'applications' | 'speedtest'
 type ViewState = 'loading' | 'snapshot' | 'error'
-type SpeedTestPanel = 'basic' | 'deep'
+type SpeedTestPanel = 'basic' | 'deep' | 'purity'
 type BasicState = 'idle' | 'running' | 'done' | 'error'
 type IperfState = 'idle' | 'running' | 'done'
 type WifiState = 'idle' | 'loading' | 'done'
@@ -113,23 +113,26 @@ const activeStageIndex = computed(() =>
   activeStage.value === null ? 0 : stageOrder.indexOf(activeStage.value) + 1,
 )
 
-async function startBasicTest(): Promise<void> {
+const requestedStages = ref<SpeedTestStage[]>([])
+
+async function startBasicTest(stages: SpeedTestStage[]): Promise<void> {
   if (basicState.value === 'running') return
   basicError.value = null
   basicEnd.value = null
   basicStages.value = []
   activeStage.value = null
+  requestedStages.value = stages
   basicState.value = 'running'
   basicStartedAt = Date.now()
   elapsedSeconds.value = 0
-  const result = await runSpeedTestBasic((stage) => {
+  const result = await runSpeedTestBasic(stages, (stage) => {
     basicStages.value = [...basicStages.value, stage]
     activeStage.value = stage.stage
   })
   if (!active) return
   if (result.kind === 'end') {
     basicEnd.value = result.end
-    basicStages.value = result.end.stages
+    if (result.end.stages.length > 0) basicStages.value = result.end.stages
     basicState.value = result.end.error ? 'error' : 'done'
     if (result.end.error) {
       basicError.value = {
@@ -143,6 +146,12 @@ async function startBasicTest(): Promise<void> {
     basicError.value = result.error
     basicState.value = 'error'
   }
+}
+
+const loadedStageCount = computed(() => basicStages.value.length)
+
+function stageLoaded(stage: SpeedTestStage): boolean {
+  return basicStages.value.some((item) => item.stage === stage)
 }
 
 async function cancelBasicTest(): Promise<void> {
@@ -185,7 +194,24 @@ const purityVerdict = computed<{ label: string; status: BackendStatus; reason: s
   if (result.proxy === true) return { label: '代理出口', status: 'degraded', reason: 'proxy_flag' }
   if (result.hosting === true) return { label: '机房 IP', status: 'degraded', reason: 'hosting_flag' }
   if (result.mobile === true) return { label: '移动网络', status: 'degraded', reason: 'mobile_flag' }
+  if (result.riskScore !== null && result.riskScore >= 60) {
+    return { label: '高风险', status: 'degraded', reason: `risk_score_${result.riskScore}` }
+  }
   return { label: '未标记', status: 'healthy', reason: 'no_proxy_or_hosting_flags' }
+})
+
+const riskLabel = computed<{ label: string; tone: 'good' | 'warn' | 'bad' }>(() => {
+  const score = purity.value?.riskScore
+  if (score === null || score === undefined) return { label: '—', tone: 'warn' }
+  if (score < 25) return { label: '低风险', tone: 'good' }
+  if (score < 60) return { label: '中风险', tone: 'warn' }
+  return { label: '高风险', tone: 'bad' }
+})
+
+const humanBot = computed<{ human: number | null; bot: number | null }>(() => {
+  const score = purity.value?.riskScore
+  if (score === null || score === undefined) return { human: null, bot: null }
+  return { human: 100 - score, bot: score }
 })
 
 // ---- deep speed test ----
@@ -522,7 +548,15 @@ onBeforeUnmount(() => {
 
         <template v-if="state !== 'error' && activeTab === 'interfaces'">
           <div class="network-table-wrap">
-            <table class="network-table">
+            <table class="network-table interface-table">
+              <colgroup>
+                <col class="interface-column" />
+                <col class="kind-column" />
+                <col class="link-column" />
+                <col class="rate-column" />
+                <col class="rate-column" />
+                <col class="status-column" />
+              </colgroup>
               <thead>
                 <tr>
                   <th scope="col">接口</th>
@@ -632,6 +666,14 @@ onBeforeUnmount(() => {
               >
                 深度测速
               </button>
+              <button
+                class="speed-segment"
+                :class="{ 'is-active': speedPanel === 'purity' }"
+                type="button"
+                @click="speedPanel = 'purity'"
+              >
+                IP 纯净度
+              </button>
             </div>
 
             <!-- 基础测速 -->
@@ -647,7 +689,7 @@ onBeforeUnmount(() => {
                   class="speed-start"
                   type="button"
                   :disabled="capabilityStatus(speedtestCapability) === 'unsupported'"
-                  @click="startBasicTest"
+                  @click="() => startBasicTest(['latency', 'bandwidth'])"
                 >
                   开始测速
                 </button>
@@ -671,7 +713,7 @@ onBeforeUnmount(() => {
                   <CircleAlert :size="16" aria-hidden="true" />
                   <span>测速失败</span>
                   <code>{{ basicError.reason }}</code>
-                  <button class="network-secondary-button" type="button" @click="startBasicTest">
+                  <button class="network-secondary-button" type="button" @click="() => startBasicTest(['latency', 'bandwidth'])">
                     <RefreshCw :size="15" aria-hidden="true" />
                     <span>重试</span>
                   </button>
@@ -687,7 +729,15 @@ onBeforeUnmount(() => {
                     站点延迟
                     <small>HTTP 首字节 TTFB · 3 次探测 · 经透明代理时连接时间为代理本地应答，以 TTFB 为准</small>
                   </h2>
-                  <div class="network-table-wrap">
+                  <div v-if="!stageLoaded('latency') && basicState === 'running'" class="speed-stage-pending" role="status">
+                    <LoaderCircle :size="16" class="is-spinning" aria-hidden="true" />
+                    <span>正在测量：站点延迟…</span>
+                  </div>
+                  <div v-else-if="!stageLoaded('latency') && basicState !== 'running'" class="speed-stage-pending">
+                    <CircleHelp :size="16" aria-hidden="true" />
+                    <span>本组未测得</span>
+                  </div>
+                  <div v-if="stageLoaded('latency')" class="network-table-wrap">
                     <table class="network-table speed-latency-table">
                       <thead>
                         <tr>
@@ -722,6 +772,15 @@ onBeforeUnmount(() => {
 
                 <section class="speed-band" aria-label="网络带宽">
                   <h2 class="speed-band-heading">网络带宽</h2>
+                  <div v-if="!stageLoaded('bandwidth') && basicState === 'running'" class="speed-stage-pending" role="status">
+                    <LoaderCircle :size="16" class="is-spinning" aria-hidden="true" />
+                    <span>正在测量：网络带宽…</span>
+                  </div>
+                  <div v-else-if="!stageLoaded('bandwidth') && basicState !== 'running'" class="speed-stage-pending">
+                    <CircleHelp :size="16" aria-hidden="true" />
+                    <span>本组未测得</span>
+                  </div>
+                  <template v-if="stageLoaded('bandwidth')">
                   <div class="bw-subgroup">
                     <h3 class="bw-subgroup-heading">
                       国际线路
@@ -776,48 +835,13 @@ onBeforeUnmount(() => {
                       国内镜像全部不可达：当前流量可能经代理线路，此组结果不代表国内带宽；镜像列表由 appd 配置。
                     </p>
                   </div>
-                </section>
-
-                <section class="speed-band" aria-label="IP 纯净度">
-                  <h2 class="speed-band-heading">IP 纯净度 <code>ip-api.com</code></h2>
-                  <dl class="speed-facts">
-                    <div class="speed-fact">
-                      <dt>出口 IP</dt>
-                      <dd>{{ purity?.ip ?? '—' }}<code>{{ purity?.source ?? '未测量' }}</code></dd>
-                    </div>
-                    <div class="speed-fact">
-                      <dt>地理位置</dt>
-                      <dd>{{ purity ? [purity.country, purity.region, purity.city].filter(Boolean).join(' · ') || '—' : '—' }}<code>country / region / city</code></dd>
-                    </div>
-                    <div class="speed-fact">
-                      <dt>ISP</dt>
-                      <dd>{{ purity?.isp ?? '—' }}<code>isp</code></dd>
-                    </div>
-                    <div class="speed-fact">
-                      <dt>ASN</dt>
-                      <dd>{{ purity?.asn ?? '—' }}<code>{{ purity?.asname ?? 'as / asname' }}</code></dd>
-                    </div>
-                    <div class="speed-fact">
-                      <dt>标记</dt>
-                      <dd>
-                        proxy {{ purity?.proxy ?? '—' }} · hosting {{ purity?.hosting ?? '—' }} · mobile {{ purity?.mobile ?? '—' }}
-                        <code>ip-api 标记</code>
-                      </dd>
-                    </div>
-                    <div class="speed-fact">
-                      <dt>判定</dt>
-                      <dd>
-                        <span class="dd-verdict" :class="`is-${purityVerdict.status}`">{{ purityVerdict.label }}</span>
-                        <code>{{ purityVerdict.reason }}</code>
-                      </dd>
-                    </div>
-                  </dl>
+                  </template>
                 </section>
               </template>
             </div>
 
             <!-- 深度测速 -->
-            <div v-else class="speed-deep">
+            <div v-else-if="speedPanel === 'deep'" class="speed-deep">
               <div class="speed-toolbar">
                 <span class="capability-token" :class="`is-${capabilityStatus(deeptestCapability)}`">
                   network.deeptest.v1
@@ -955,6 +979,177 @@ onBeforeUnmount(() => {
                   <code>{{ linssidResult.reason }}</code>
                 </p>
               </section>
+            </div>
+
+            <div v-else class="speed-purity">
+              <div class="speed-toolbar">
+                <span class="capability-token" :class="`is-${capabilityStatus(speedtestCapability)}`">
+                  network.speedtest.v1
+                </span>
+                <code class="speed-capability-reason">{{ speedtestCapability?.reason ?? 'capability_unknown' }}</code>
+                <span v-if="basicEnd" class="speed-last-run">上次检测 {{ formatClock(basicEnd.endedAtUnixMs) }}</span>
+                <button
+                  v-if="basicState !== 'running'"
+                  class="speed-start"
+                  type="button"
+                  :disabled="capabilityStatus(speedtestCapability) === 'unsupported'"
+                  @click="() => startBasicTest(['ip_purity'])"
+                >
+                  检测
+                </button>
+                <button v-else class="speed-secondary" type="button" @click="cancelBasicTest">取消</button>
+              </div>
+
+              <div v-if="basicState === 'idle'" class="speed-state">
+                <Hourglass :size="38" aria-hidden="true" />
+                <strong>尚未检测</strong>
+                <code>点击「检测」查询出口 IP 基础事实与风险值（ip-api.com + ipok.io）</code>
+              </div>
+
+              <div v-else-if="basicState === 'running'" class="speed-state" role="status">
+                <LoaderCircle :size="38" class="is-spinning" aria-hidden="true" />
+                <strong>正在检测 IP 风险…</strong>
+                <code>已运行 {{ elapsedSeconds }}s · 查询 ip-api.com 与 ipok.io</code>
+              </div>
+
+              <template v-else>
+                <div v-if="basicError" class="speed-refresh-error" role="status">
+                  <CircleAlert :size="16" aria-hidden="true" />
+                  <span>检测失败</span>
+                  <code>{{ basicError.reason }}</code>
+                  <button class="network-secondary-button" type="button" @click="() => startBasicTest(['ip_purity'])">
+                    <RefreshCw :size="15" aria-hidden="true" />
+                    <span>重试</span>
+                  </button>
+                </div>
+                <div v-else-if="basicEnd?.cancelled" class="speed-refresh-error" role="status">
+                  <CircleAlert :size="16" aria-hidden="true" />
+                  <span>检测已取消</span>
+                  <code>cancelled_by_user</code>
+                </div>
+
+                <section class="speed-band" aria-label="IP 纯净度">
+                  <h2 class="speed-band-heading">
+                    IP 纯净度
+                    <small>基础事实来自 ip-api.com · 风险值来自 ipok.io 公开接口（7 源加权）</small>
+                  </h2>
+                  <div class="network-table-wrap">
+                    <table class="network-table speed-purity-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">项目</th>
+                          <th scope="col">值</th>
+                          <th scope="col">来源</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <th scope="row"><span>出口 IP</span></th>
+                          <td><code>{{ purity?.ip ?? '—' }}</code></td>
+                          <td><code>ip-api.com</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>地理位置</span></th>
+                          <td><span>{{ purity ? [purity.country, purity.region, purity.city].filter(Boolean).join(' · ') || '—' : '—' }}</span></td>
+                          <td><code>ip-api.com</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>ISP</span></th>
+                          <td><span>{{ purity?.isp ?? '—' }}</span></td>
+                          <td><code>ip-api.com</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>ASN</span></th>
+                          <td><code>{{ purity?.asn ?? '—' }}<template v-if="purity?.asname"> · {{ purity.asname }}</template></code></td>
+                          <td><code>ip-api.com</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>IP 类型</span></th>
+                          <td><span>{{ purity?.ipType ?? '—' }}</span></td>
+                          <td><code>ipok.io · ipType</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>风险值</span></th>
+                          <td>
+                            <template v-if="purity?.riskScore !== null && purity?.riskScore !== undefined">
+                              <span class="risk-pill" :class="`is-${riskLabel.tone}`">{{ riskLabel.label }}</span>
+                              <code>{{ purity.riskScore }}/100<template v-if="purity.riskError"> · {{ purity.riskError }}</template></code>
+                            </template>
+                            <code v-else>{{ purity?.riskError ?? '—' }}</code>
+                          </td>
+                          <td><code>ipok.io</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>人机占比</span></th>
+                          <td>
+                            <template v-if="humanBot.human !== null">
+                              <span>真人 {{ humanBot.human }}% · 机器人 {{ humanBot.bot }}%</span>
+                            </template>
+                            <code v-else>—</code>
+                          </td>
+                          <td><code>派生：机器人占比 = 风险值</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>标记</span></th>
+                          <td>
+                            <span>proxy {{ purity?.proxy ?? '—' }} · hosting {{ purity?.hosting ?? '—' }} · mobile {{ purity?.mobile ?? '—' }}</span>
+                            <small v-if="purity?.signals.length">signals: {{ purity.signals.join(' · ') }}</small>
+                          </td>
+                          <td><code>ip-api.com + ipok.io</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>黑名单</span></th>
+                          <td>
+                            <template v-if="purity?.blocklistChecked !== null && purity?.blocklistChecked !== undefined">
+                              <span :class="purity.blocklistListed.length > 0 ? 'speed-fail' : 'speed-ok'">
+                                {{ purity.blocklistListed.length > 0 ? purity.blocklistListed.join(' · ') : '未命中' }}
+                              </span>
+                              <small>检查 {{ purity.blocklistChecked }} 个库</small>
+                            </template>
+                            <code v-else>—</code>
+                          </td>
+                          <td><code>ipok.io</code></td>
+                        </tr>
+                        <tr>
+                          <th scope="row"><span>判定</span></th>
+                          <td>
+                            <span class="dd-verdict" :class="`is-${purityVerdict.status}`">{{ purityVerdict.label }}</span>
+                            <small>{{ purityVerdict.reason }}</small>
+                          </td>
+                          <td><code>派生</code></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div v-if="purity?.riskSources.length" class="bw-subgroup">
+                    <h3 class="bw-subgroup-heading">风控来源明细 <code>ipok.io riskBreakdown</code></h3>
+                    <div class="network-table-wrap">
+                      <table class="network-table speed-purity-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">来源</th>
+                            <th scope="col">风险</th>
+                            <th scope="col">权重</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="source in purity?.riskSources" :key="source.source">
+                            <th scope="row"><span>{{ source.source }}</span></th>
+                            <td><code>{{ source.risk ?? '—' }}</code></td>
+                            <td><code>{{ source.weight ?? '—' }}</code></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <p class="speed-note">
+                    风险值与风控来源明细来自 <code>ipok.io/api/ip</code> 公开接口；「人机占比」为派生值
+                    <code>（机器人占比 = 风险值，真人占比 = 100 − 风险值）</code>，非第三方直接返回。
+                  </p>
+                </section>
+              </template>
             </div>
           </div>
         </template>

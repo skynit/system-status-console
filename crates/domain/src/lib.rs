@@ -35,9 +35,9 @@ pub use speedtest::{
     SPEEDTEST_LATENCY_PROBES_PER_TARGET, SPEEDTEST_MAX_BANDWIDTH_MEASUREMENTS,
     SPEEDTEST_MAX_LATENCY_TARGETS, SPEEDTEST_MAX_MIRRORS, SPEEDTEST_MAX_REASON_BYTES,
     SPEEDTEST_SCHEMA_VERSION, BandwidthKind, BandwidthMeasurement, Iperf3Direction, Iperf3Result,
-    IpPurityResult, LatencyProbe, LatencyTargetResult, LinssidLaunchResult, SpeedTestBasicEnd,
-    SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestStage,
-    SpeedTestStageData, WifiNetwork, WifiScanResult,
+    IpPurityResult, IpRiskSource, LatencyProbe, LatencyTargetResult, LinssidLaunchResult,
+    SpeedTestBasicEnd, SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput,
+    SpeedTestStage, SpeedTestStageData, WifiNetwork, WifiScanResult,
 };
 pub use telemetry::{
     ApplicationSample, GroupingResolution, IssueCount, MetricState, MetricValue, SystemFdSample,

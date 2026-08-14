@@ -123,6 +123,9 @@ describe('NetworkView', () => {
     expect(wrapper.text()).toContain('1/1')
     expect(wrapper.text()).toContain('fresh')
     expect(wrapper.findAll('.network-table tbody tr')).toHaveLength(1)
+    expect(wrapper.get('.network-table').classes()).toContain('interface-table')
+    expect(wrapper.findAll('.interface-table colgroup col')).toHaveLength(6)
+    expect(wrapper.findAll('.interface-table .rate-column')).toHaveLength(2)
     expect(wrapper.get('[data-network-tab="interfaces"]').attributes('aria-controls')).toBe('network-panel-interfaces')
     expect(wrapper.get('.network-workspace').attributes('role')).toBe('tabpanel')
     expect(wrapper.get('.network-workspace').attributes('aria-labelledby')).toBe('network-tab-interfaces')
@@ -308,7 +311,7 @@ function basicEnd(): SpeedTestBasicEnd {
         stage: 'ip_purity',
         payload: {
           purity: {
-            source: 'ip-api.com',
+            source: 'ip-api.com + ipok.io',
             ip: '38.92.26.68',
             country: '美国',
             region: '犹他州',
@@ -320,6 +323,16 @@ function basicEnd(): SpeedTestBasicEnd {
             proxy: false,
             hosting: false,
             mobile: false,
+            riskScore: 30,
+            ipType: 'hosting',
+            signals: ['hosting'],
+            riskSources: [
+              { source: 'ip-api', risk: 10, weight: 0.5 },
+              { source: 'Scamalytics', risk: 30, weight: 0.9 },
+            ],
+            blocklistChecked: 5,
+            blocklistListed: [],
+            riskError: null,
             error: null,
           },
         },
@@ -399,11 +412,59 @@ describe('NetworkView speedtest tab', () => {
     expect(wrapper.text()).toContain('32.9')
     expect(wrapper.text()).toContain('16.6')
     expect(wrapper.text()).toContain('curl_exit_47_too_many_redirects')
-    expect(wrapper.text()).toContain('38.92.26.68')
-    expect(wrapper.text()).toContain('FiberState, LLC')
-    expect(wrapper.text()).toContain('AS26042')
-    expect(wrapper.text()).toContain('未标记')
     expect(wrapper.text()).toContain('上次测速')
+    wrapper.unmount()
+  })
+
+  it('loads latency and bandwidth sections progressively as stage frames arrive', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    const end = basicEnd()
+    mockedBasic.mockImplementation((_stages, onStage) => {
+      onStage(end.stages[0])
+      return Promise.resolve({ kind: 'end', end })
+    })
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('.speed-start').trigger('click')
+    await flushPromises()
+
+    // latency section is rendered as soon as its stage frame arrives
+    expect(wrapper.text()).toContain('github.com')
+    expect(mockedBasic).toHaveBeenCalledWith(['latency', 'bandwidth'], expect.any(Function))
+    wrapper.unmount()
+  })
+
+  it('detects IP purity in its own tab with risk score and derived human/bot share', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    const end = basicEnd()
+    mockedBasic.mockImplementation((stages, onStage) => {
+      onStage(end.stages[2])
+      return Promise.resolve({ kind: 'end', end })
+    })
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.speed-segment')[2].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('尚未检测')
+    await wrapper.get('.speed-start').trigger('click')
+    await flushPromises()
+
+    expect(mockedBasic).toHaveBeenCalledWith(['ip_purity'], expect.any(Function))
+    expect(wrapper.text()).toContain('出口 IP')
+    expect(wrapper.text()).toContain('38.92.26.68')
+    expect(wrapper.text()).toContain('风险值')
+    expect(wrapper.text()).toContain('30/100')
+    expect(wrapper.text()).toContain('中风险')
+    expect(wrapper.text()).toContain('真人 70% · 机器人 30%')
+    expect(wrapper.text()).toContain('Scamalytics')
+    expect(wrapper.text()).toContain('未标记')
     wrapper.unmount()
   })
 

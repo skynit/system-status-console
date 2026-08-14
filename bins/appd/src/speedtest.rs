@@ -2,19 +2,20 @@
 //! (iperf3 / WiFi scan / LinSSID launch).
 //!
 //! system-first: every measurement runs the stable system tools (`curl`,
-//! `iperf3`, `nmcli`, `pkexec`) as child processes with wall-clock timeouts.
+//! `iperf3`, `nmcli`, `iw`, `pkexec`) as child processes with wall-clock timeouts.
 //! No new HTTP client or measurement dependency is introduced; when a tool is
 //! missing the corresponding capability reports `unsupported` with a reason.
 
 use localdesk_domain::{
-    BandwidthKind, BandwidthMeasurement, CapabilityRuntimeState,
-    Iperf3Direction, Iperf3Result, IpPurityResult, LatencyProbe, LatencyTargetResult,
-    LinssidLaunchResult, SPEEDTEST_LATENCY_PROBES_PER_TARGET, SPEEDTEST_SCHEMA_VERSION,
-    SpeedTestBasicEnd, SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput,
+    BandwidthKind, BandwidthMeasurement, CapabilityRuntimeState, Iperf3Direction, Iperf3Result,
+    IpPurityResult, IpRiskSource, LatencyProbe, LatencyTargetResult, LinssidLaunchResult,
+    SPEEDTEST_LATENCY_PROBES_PER_TARGET, SPEEDTEST_SCHEMA_VERSION, SpeedTestBasicEnd,
+    SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestStage,
     SpeedTestStageData, WifiNetwork, WifiScanResult,
 };
 use localdesk_ipc::SpeedTestStreamEvent;
 use std::{
+    collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
     process::Stdio,
@@ -68,6 +69,7 @@ pub struct Tools {
     curl: Option<PathBuf>,
     iperf3: Option<PathBuf>,
     nmcli: Option<PathBuf>,
+    iw: Option<PathBuf>,
     linssid: Option<PathBuf>,
     pkexec: Option<PathBuf>,
 }
@@ -78,6 +80,7 @@ impl Tools {
             curl: tool_in_path("curl"),
             iperf3: tool_in_path("iperf3"),
             nmcli: tool_in_path("nmcli"),
+            iw: tool_in_path("iw"),
             linssid: tool_in_path("linssid"),
             pkexec: tool_in_path("pkexec"),
         }
@@ -215,8 +218,11 @@ impl SpeedTestHandle {
         )
     }
 
+    /// Runs the requested stages concurrently; each stage frame is sent as soon
+    /// as that stage finishes, followed by a single End frame.
     pub fn start_basic(
         &self,
+        stages: Vec<SpeedTestStage>,
     ) -> Result<mpsc::Receiver<SpeedTestStreamEvent>, SpeedTestError> {
         if self.basic_busy.swap(true, Ordering::AcqRel) {
             return Err(SpeedTestError::busy());
@@ -228,44 +234,47 @@ impl SpeedTestHandle {
         let tools = self.tools.clone();
         tokio::spawn(async move {
             let started_at = now_unix_ms();
-            let mut stages = Vec::new();
-            let mut cancelled;
-            let fatal = None;
-
-            if !cancel.load(Ordering::Acquire) {
-                stages.push(SpeedTestStageData::Latency {
-                    targets: run_latency_stage(&cancel).await,
-                });
-                cancelled = cancel.load(Ordering::Acquire);
-            } else {
-                cancelled = true;
+            let mut stage_handles = Vec::with_capacity(stages.len());
+            for stage in stages {
+                let stage_cancel = Arc::clone(&cancel);
+                let stage_tools = tools.clone();
+                let stage_sender = sender.clone();
+                stage_handles.push(tokio::spawn(async move {
+                    let data = match stage {
+                        SpeedTestStage::Latency => SpeedTestStageData::Latency {
+                            targets: run_latency_stage(&stage_cancel).await,
+                        },
+                        SpeedTestStage::Bandwidth => SpeedTestStageData::Bandwidth {
+                            measurements: run_bandwidth_stage(&stage_cancel).await,
+                        },
+                        SpeedTestStage::IpPurity => SpeedTestStageData::IpPurity {
+                            purity: run_ip_purity_stage(&stage_tools).await,
+                        },
+                    };
+                    // Client may have gone away; ignore send failures.
+                    let _ = stage_sender.send(SpeedTestStreamEvent::Stage(data.clone())).await;
+                    data
+                }));
             }
-            if !cancelled {
-                stages.push(SpeedTestStageData::Bandwidth {
-                    measurements: run_bandwidth_stage(&cancel).await,
-                });
-                cancelled = cancel.load(Ordering::Acquire);
-            }
-            if !cancelled {
-                stages.push(SpeedTestStageData::IpPurity {
-                    purity: run_ip_purity_stage(&tools).await,
-                });
-            }
-
-            for stage in &stages {
-                if sender.send(SpeedTestStreamEvent::Stage(stage.clone())).await.is_err() {
-                    // Client went away; stop measuring.
-                    basic_busy.store(false, Ordering::Release);
-                    return;
+            let mut completed = Vec::with_capacity(stage_handles.len());
+            for handle in stage_handles {
+                if let Ok(data) = handle.await {
+                    completed.push(data);
                 }
             }
+            // Stable output order regardless of completion order.
+            completed.sort_by_key(|data| match data.stage() {
+                SpeedTestStage::Latency => 0,
+                SpeedTestStage::Bandwidth => 1,
+                SpeedTestStage::IpPurity => 2,
+            });
             let end = SpeedTestBasicEnd {
                 schema_version: SPEEDTEST_SCHEMA_VERSION,
                 started_at_unix_ms: started_at,
                 ended_at_unix_ms: now_unix_ms(),
-                stages,
-                cancelled,
-                error: fatal,
+                stages: completed,
+                cancelled: cancel.load(Ordering::Acquire),
+                error: None,
             };
             let _ = sender.send(SpeedTestStreamEvent::End(Box::new(end))).await;
             basic_busy.store(false, Ordering::Release);
@@ -735,16 +744,30 @@ async fn run_latency_stage(cancel: &Arc<AtomicBool>) -> Vec<LatencyTargetResult>
 
 async fn run_bandwidth_stage(cancel: &Arc<AtomicBool>) -> Vec<BandwidthMeasurement> {
     let mut measurements = Vec::new();
-
-    if !cancel.load(Ordering::Acquire) {
-        measurements.push(run_international_measurement().await);
+    if cancel.load(Ordering::Acquire) {
+        return measurements;
     }
-    if !cancel.load(Ordering::Acquire) {
-        for (label, url) in DOMESTIC_MIRRORS {
-            if cancel.load(Ordering::Acquire) {
-                break;
+    // International (cloudflare) and every domestic mirror run concurrently.
+    let international = tokio::spawn(run_international_measurement());
+    let mut mirror_tasks = Vec::with_capacity(DOMESTIC_MIRRORS.len());
+    for (label, url) in DOMESTIC_MIRRORS {
+        let label = *label;
+        let url = *url;
+        let mirror_cancel = Arc::clone(cancel);
+        mirror_tasks.push(tokio::spawn(async move {
+            if mirror_cancel.load(Ordering::Acquire) {
+                None
+            } else {
+                Some(run_domestic_measurement(label, url).await)
             }
-            measurements.push(run_domestic_measurement(*label, *url).await);
+        }));
+    }
+    if let Ok(measurement) = international.await {
+        measurements.push(measurement);
+    }
+    for task in mirror_tasks {
+        if let Ok(Some(measurement)) = task.await {
+            measurements.push(measurement);
         }
     }
     measurements
@@ -887,6 +910,13 @@ async fn run_ip_purity_stage(tools: &Tools) -> IpPurityResult {
             proxy: None,
             hosting: None,
             mobile: None,
+            risk_score: None,
+            ip_type: None,
+            signals: Vec::new(),
+            risk_sources: Vec::new(),
+            blocklist_checked: None,
+            blocklist_listed: Vec::new(),
+            risk_error: None,
             error,
         };
     }
@@ -907,6 +937,13 @@ async fn run_ip_purity_stage(tools: &Tools) -> IpPurityResult {
                 proxy: None,
                 hosting: None,
                 mobile: None,
+                risk_score: None,
+                ip_type: None,
+                signals: Vec::new(),
+                risk_sources: Vec::new(),
+                blocklist_checked: None,
+                blocklist_listed: Vec::new(),
+                risk_error: None,
                 error: Some(reason),
             };
         }
@@ -927,6 +964,13 @@ async fn run_ip_purity_stage(tools: &Tools) -> IpPurityResult {
                 proxy: None,
                 hosting: None,
                 mobile: None,
+                risk_score: None,
+                ip_type: None,
+                signals: Vec::new(),
+                risk_sources: Vec::new(),
+                blocklist_checked: None,
+                blocklist_listed: Vec::new(),
+                risk_error: None,
                 error: Some("ip_api_invalid_json".to_owned()),
             };
         }
@@ -934,9 +978,31 @@ async fn run_ip_purity_stage(tools: &Tools) -> IpPurityResult {
     let status = parsed["status"].as_str().unwrap_or("");
     let field = |key: &str| parsed[key].as_str().map(str::to_owned);
     let flag = |key: &str| parsed[key].as_bool();
+    let ip = field("query");
+    let base_error = if status == "success" {
+        None
+    } else {
+        Some(format!("ip_api_status_failure:{}", if status.is_empty() { "unknown" } else { status }))
+    };
+    // Risk data from the ipok.io public API (7 weighted sources). Runs only
+    // when the base lookup produced an address.
+    let (risk_score, ip_type, signals, risk_sources, blocklist_checked, blocklist_listed, risk_error) =
+        if base_error.is_none() && ip.is_some() {
+            run_ipok_risk_query(ip.as_deref().unwrap_or("")).await
+        } else {
+            (
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                None,
+                Vec::new(),
+                Some("ip_api_unavailable".to_owned()),
+            )
+        };
     IpPurityResult {
-        source: "ip-api.com".to_owned(),
-        ip: field("query"),
+        source: "ip-api.com + ipok.io".to_owned(),
+        ip,
         country: field("country"),
         region: field("regionName"),
         city: field("city"),
@@ -947,12 +1013,103 @@ async fn run_ip_purity_stage(tools: &Tools) -> IpPurityResult {
         proxy: flag("proxy"),
         hosting: flag("hosting"),
         mobile: flag("mobile"),
-        error: if status == "success" {
-            None
-        } else {
-            Some(format!("ip_api_status_failure:{}", if status.is_empty() { "unknown" } else { status }))
-        },
+        risk_score,
+        ip_type,
+        signals,
+        risk_sources,
+        blocklist_checked,
+        blocklist_listed,
+        risk_error,
+        error: base_error,
     }
+}
+
+const IPOK_API_URL: &str = "https://ipok.io/api/ip?ip=";
+const IPOK_TIMEOUT: Duration = Duration::from_secs(8);
+const IPOK_MAX_SOURCES: usize = 8;
+const IPOK_MAX_SIGNALS: usize = 8;
+const IPOK_MAX_BLOCKLIST: usize = 16;
+
+async fn run_ipok_risk_query(
+    ip: &str,
+) -> (
+    Option<u32>,
+    Option<String>,
+    Vec<String>,
+    Vec<IpRiskSource>,
+    Option<u32>,
+    Vec<String>,
+    Option<String>,
+) {
+    let url = format!("{IPOK_API_URL}{ip}");
+    let args = [
+        "-s".to_owned(),
+        "-A".to_owned(),
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36".to_owned(),
+        "--max-time".to_owned(),
+        "8".to_owned(),
+        url,
+    ];
+    let output = match run_curl(&args, IPOK_TIMEOUT).await {
+        Ok(run) => run,
+        Err(reason) => return (None, None, Vec::new(), Vec::new(), None, Vec::new(), Some(reason)),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(output.stdout.trim()) {
+        Ok(value) => value,
+        Err(_) => {
+            return (
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                None,
+                Vec::new(),
+                Some("ipok_invalid_json".to_owned()),
+            );
+        }
+    };
+    let risk_score = parsed["risk"].as_u64().map(|value| value.min(100) as u32);
+    let ip_type = parsed["ipType"].as_str().map(str::to_owned);
+    let mut signals = Vec::new();
+    if let Some(values) = parsed["signals"].as_array() {
+        for value in values.iter().take(IPOK_MAX_SIGNALS) {
+            if let Some(signal) = value.as_str() {
+                signals.push(signal.to_owned());
+            }
+        }
+    }
+    let mut risk_sources = Vec::new();
+    if let Some(contributors) = parsed["riskBreakdown"]["contributors"].as_array() {
+        for contributor in contributors.iter().take(IPOK_MAX_SOURCES) {
+            let source = contributor["source"].as_str().unwrap_or("").to_owned();
+            if source.is_empty() {
+                continue;
+            }
+            risk_sources.push(IpRiskSource {
+                source,
+                risk: contributor["risk"].as_u64().map(|value| value.min(100) as u32),
+                weight: contributor["weight"].as_f64(),
+            });
+        }
+    }
+    let blocklist_checked = parsed["blocklist"]["checked"].as_u64().map(|value| value as u32);
+    let mut blocklist_listed = Vec::new();
+    if let Some(listed) = parsed["blocklist"]["listed"].as_array() {
+        for value in listed.iter().take(IPOK_MAX_BLOCKLIST) {
+            if let Some(entry) = value.as_str() {
+                blocklist_listed.push(entry.to_owned());
+            }
+        }
+    }
+    (
+        risk_score,
+        ip_type,
+        signals,
+        risk_sources,
+        blocklist_checked,
+        blocklist_listed,
+        None,
+    )
 }
 
 #[cfg(test)]

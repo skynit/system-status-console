@@ -101,6 +101,7 @@ import {
   type BandwidthMeasurement,
   type Iperf3Result,
   type IpPurityResult,
+  type IpRiskSource,
   type LatencyProbe,
   type LatencyTargetResult,
   type LinssidLaunchResult,
@@ -2879,8 +2880,41 @@ function normalizeBandwidthMeasurement(value: unknown): BandwidthMeasurement | n
   }
 }
 
+function normalizeIpRiskSource(value: unknown): IpRiskSource | null {
+  if (!isRecord(value) || typeof value.source !== 'string' || value.source.length === 0) return null
+  const risk = asNullableNumber(value.risk)
+  if (risk !== null && (risk < 0 || risk > 100)) return null
+  const weight = asNullableNumber(value.weight)
+  if (weight !== null && (weight < 0 || weight > 1)) return null
+  return { source: value.source, risk, weight }
+}
+
 function normalizeIpPurity(value: unknown): IpPurityResult | null {
   if (!isRecord(value) || typeof value.source !== 'string') return null
+  const riskScore = asNullableNumber(value.risk_score)
+  if (riskScore !== null && (riskScore < 0 || riskScore > 100)) return null
+  const riskSources: IpRiskSource[] = []
+  if (Array.isArray(value.risk_sources)) {
+    for (const source of value.risk_sources) {
+      const normalized = normalizeIpRiskSource(source)
+      if (!normalized) return null
+      riskSources.push(normalized)
+    }
+  }
+  const signals: string[] = []
+  if (Array.isArray(value.signals)) {
+    for (const signal of value.signals) {
+      if (typeof signal !== 'string' || signal.length === 0) return null
+      signals.push(signal)
+    }
+  }
+  const blocklistListed: string[] = []
+  if (Array.isArray(value.blocklist_listed)) {
+    for (const entry of value.blocklist_listed) {
+      if (typeof entry !== 'string' || entry.length === 0) return null
+      blocklistListed.push(entry)
+    }
+  }
   return {
     source: value.source,
     ip: asNullableString(value.ip),
@@ -2894,6 +2928,13 @@ function normalizeIpPurity(value: unknown): IpPurityResult | null {
     proxy: asNullableBoolean(value.proxy),
     hosting: asNullableBoolean(value.hosting),
     mobile: asNullableBoolean(value.mobile),
+    riskScore,
+    ipType: asNullableString(value.ip_type),
+    signals,
+    riskSources,
+    blocklistChecked: asNullableNumber(value.blocklist_checked),
+    blocklistListed,
+    riskError: asNullableString(value.risk_error),
     error: asNullableString(value.error),
   }
 }
@@ -3038,10 +3079,22 @@ export function normalizeSpeedTestCancelResult(value: unknown): SpeedTestCancelR
 }
 
 export async function runSpeedTestBasic(
+  stages: SpeedTestStage[],
   onStage: (stage: SpeedTestStageData) => void,
 ): Promise<SpeedTestBasicFetchResult> {
   if (!isDesktopBridgeAvailable()) {
     return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
+  }
+  if (stages.length === 0 || stages.length > 3 || new Set(stages).size !== stages.length) {
+    return {
+      kind: 'error',
+      error: {
+        kind: 'protocol',
+        code: 'speedtest_stages_invalid',
+        reason: 'speedtest_stages_invalid',
+        retryable: false,
+      },
+    }
   }
   let invalidEvent = false
   const channel = new Channel<unknown>()
@@ -3052,7 +3105,7 @@ export async function runSpeedTestBasic(
   }
   try {
     const end = normalizeSpeedTestBasicEnd(
-      await invoke<unknown>('speedtest_basic', { onStage: channel }),
+      await invoke<unknown>('speedtest_basic', { stages, onStage: channel }),
     )
     if (!end) {
       return {

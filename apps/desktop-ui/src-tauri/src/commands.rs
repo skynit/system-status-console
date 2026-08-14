@@ -143,11 +143,12 @@ pub async fn usage_summary(query: UsageSummaryQuery) -> Result<UsageSummary, Bri
 #[tauri::command]
 pub async fn speedtest_basic(
     on_stage: Channel<SpeedTestStageData>,
+    stages: Vec<localdesk_domain::SpeedTestStage>,
 ) -> Result<SpeedTestBasicEnd, BridgeError> {
     let path = runtime_socket_path().map_err(|error| error.into_bridge_error())?;
     request_speedtest_basic(
         &path,
-        RequestEnvelope::speedtest_basic(),
+        RequestEnvelope::speedtest_basic(stages),
         move |stage| {
             on_stage.send(stage).map_err(|_| {
                 ClientError::Protocol(localdesk_ipc::ProtocolError::UnexpectedBody)

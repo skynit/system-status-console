@@ -154,11 +154,11 @@ impl RequestEnvelope {
         }
     }
 
-    pub fn speedtest_basic() -> Self {
+    pub fn speedtest_basic(stages: Vec<localdesk_domain::SpeedTestStage>) -> Self {
         Self {
             protocol_version: WIRE_PROTOCOL_VERSION,
             request_id: Uuid::new_v4(),
-            body: RequestBody::SpeedTestBasic(SpeedTestBasicRequest {}),
+            body: RequestBody::SpeedTestBasic(SpeedTestBasicRequest { stages }),
         }
     }
 
@@ -202,7 +202,33 @@ pub enum RequestBody {
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct SpeedTestBasicRequest {}
+pub struct SpeedTestBasicRequest {
+    pub stages: Vec<localdesk_domain::SpeedTestStage>,
+}
+
+impl SpeedTestBasicRequest {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.stages.is_empty() {
+            return Err("speedtest_stages_empty");
+        }
+        if self.stages.len() > 3 {
+            return Err("speedtest_stages_too_many");
+        }
+        let mut seen = [false; 3];
+        for stage in &self.stages {
+            let index = match stage {
+                localdesk_domain::SpeedTestStage::Latency => 0,
+                localdesk_domain::SpeedTestStage::Bandwidth => 1,
+                localdesk_domain::SpeedTestStage::IpPurity => 2,
+            };
+            if seen[index] {
+                return Err("speedtest_stages_duplicate");
+            }
+            seen[index] = true;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

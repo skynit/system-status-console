@@ -74,7 +74,24 @@ impl BandwidthMeasurement {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IpRiskSource {
+    pub source: String,
+    pub risk: Option<u32>,
+    pub weight: Option<f64>,
+}
+
+impl IpRiskSource {
+    pub fn validate(&self) -> bool {
+        !self.source.is_empty()
+            && self.source.len() <= 64
+            && self.risk.is_none_or(|risk| risk <= 100)
+            && self.weight.is_none_or(|weight| (0.0..=1.0).contains(&weight))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IpPurityResult {
     pub source: String,
@@ -89,6 +106,18 @@ pub struct IpPurityResult {
     pub proxy: Option<bool>,
     pub hosting: Option<bool>,
     pub mobile: Option<bool>,
+    /// Risk score 0-100 from the ipok.io public API (7 weighted sources).
+    pub risk_score: Option<u32>,
+    /// ipok.io ipType/usageType, e.g. "native" or "hosting".
+    pub ip_type: Option<String>,
+    /// ipok.io signals, e.g. ["hosting"].
+    pub signals: Vec<String>,
+    /// ipok.io riskBreakdown contributors.
+    pub risk_sources: Vec<IpRiskSource>,
+    pub blocklist_checked: Option<u32>,
+    pub blocklist_listed: Vec<String>,
+    /// Failure reason for the risk query (base ip-api facts may still be present).
+    pub risk_error: Option<String>,
     pub error: Option<String>,
 }
 
@@ -97,10 +126,24 @@ impl IpPurityResult {
         !self.source.is_empty()
             && self.source.len() <= 128
             && self.error.as_deref().is_none_or(|e| e.len() <= SPEEDTEST_MAX_REASON_BYTES)
+            && self.risk_score.is_none_or(|score| score <= 100)
+            && self.risk_sources.len() <= 8
+            && self.risk_sources.iter().all(IpRiskSource::validate)
+            && self.signals.len() <= 8
+            && self.signals.iter().all(|s| !s.is_empty() && s.len() <= 64)
+            && self.blocklist_listed.len() <= 16
+            && self
+                .blocklist_listed
+                .iter()
+                .all(|s| !s.is_empty() && s.len() <= 64)
+            && self
+                .risk_error
+                .as_deref()
+                .is_none_or(|e| e.len() <= SPEEDTEST_MAX_REASON_BYTES)
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "stage", content = "payload", rename_all = "snake_case")]
 pub enum SpeedTestStageData {
     Latency { targets: Vec<LatencyTargetResult> },
@@ -134,7 +177,7 @@ impl SpeedTestStageData {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpeedTestBasicEnd {
     pub schema_version: u16,
@@ -245,6 +288,8 @@ impl Iperf3Result {
 pub struct WifiNetwork {
     pub ssid: String,
     pub signal_percent: Option<u32>,
+    pub signal_dbm: Option<i32>,
+    pub signal_bars: Option<String>,
     pub channel: Option<u32>,
     pub band: Option<String>,
     pub security: Option<String>,
@@ -266,7 +311,15 @@ impl WifiScanResult {
             && self
                 .networks
                 .iter()
-                .all(|network| network.ssid.len() <= 128)
+                .all(|network| {
+                    network.ssid.len() <= 128
+                        && network.signal_percent.is_none_or(|signal| signal <= 100)
+                        && network.signal_dbm.is_none_or(|signal| (-200..=100).contains(&signal))
+                        && network
+                            .signal_bars
+                            .as_deref()
+                            .is_none_or(|bars| bars.len() <= 16)
+                })
             && self
                 .error
                 .as_deref()

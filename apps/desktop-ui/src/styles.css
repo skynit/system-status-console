@@ -1519,6 +1519,42 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+.network-table.interface-table {
+  table-layout: fixed;
+}
+
+.interface-table .interface-column {
+  width: 20%;
+}
+
+.interface-table .kind-column {
+  width: 15%;
+}
+
+.interface-table .link-column {
+  width: 14%;
+}
+
+.interface-table .rate-column {
+  width: 18%;
+}
+
+.interface-table .status-column {
+  width: 15%;
+}
+
+.interface-table th,
+.interface-table td {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.interface-table tbody span,
+.interface-table tbody small,
+.interface-table tbody code {
+  max-width: 100%;
+}
+
 .network-table.application-table {
   min-width: 680px;
 }
@@ -5908,4 +5944,78 @@ code {
   .bw-value {
     font-size: 20px;
   }
+}
+
+/* ---- 测速：渐进加载与 IP 纯净度 tab ---- */
+
+.speed-stage-pending {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-surface) 40%, transparent);
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.speed-stage-pending > svg {
+  color: #647584;
+}
+
+.risk-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 11px;
+  font-family: ui-monospace, "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.risk-pill.is-good {
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+  color: var(--color-success);
+}
+
+.risk-pill.is-warn {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+
+.risk-pill.is-bad {
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  color: var(--color-danger);
+}
+
+.speed-purity-table {
+  min-width: 620px;
+}
+
+.speed-purity-table tbody th {
+  width: 140px;
+}
+
+.speed-purity-table td > code,
+.speed-purity-table td > span {
+  display: inline-block;
+  max-width: 480px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.speed-purity-table td > small {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.speed-purity-table td > code + small {
+  margin-top: 4px;
 }

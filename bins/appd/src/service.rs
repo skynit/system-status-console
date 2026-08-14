@@ -184,11 +184,11 @@ pub fn server_config(
     });
 
     let speedtest_basic_handle = speedtest_handle.clone();
-    let speedtest_provider: SpeedTestProvider = Arc::new(move || {
+    let speedtest_provider: SpeedTestProvider = Arc::new(move |stages| {
         let handle = speedtest_basic_handle.clone();
         let future: SpeedTestProviderFuture = Box::pin(async move {
             handle
-                .start_basic()
+                .start_basic(stages)
                 .map_err(|error| SnapshotProviderError::new(error.code, error.reason, error.retryable))
         });
         future
