@@ -36,6 +36,7 @@ import type {
   SpeedTestDeepCommand,
   SpeedTestStage,
   SpeedTestStageData,
+  WifiNetwork,
   WifiScanResult,
 } from '../types'
 
@@ -94,48 +95,43 @@ function capabilityStatus(capability: BackendCapability | null): BackendStatus {
   return capability?.status ?? 'unreachable'
 }
 
-// ---- basic speed test ----
+// ---- basic speed test + IP purity: independent runs ----
+// The daemon runs one basic-suite request at a time; each tab owns its own
+// state so starting one never makes the other tab look like it is running.
 const basicState = ref<BasicState>('idle')
 const basicError = ref<BridgeError | null>(null)
 const basicEnd = ref<SpeedTestBasicEnd | null>(null)
 const basicStages = ref<SpeedTestStageData[]>([])
-const activeStage = ref<SpeedTestStage | null>(null)
 const elapsedSeconds = ref(0)
 
-const stageOrder: SpeedTestStage[] = ['latency', 'bandwidth', 'ip_purity']
-const stageLabels: Record<SpeedTestStage, string> = {
-  latency: '站点延迟',
-  bandwidth: '网络带宽',
-  ip_purity: 'IP 纯净度',
-}
-
-const activeStageIndex = computed(() =>
-  activeStage.value === null ? 0 : stageOrder.indexOf(activeStage.value) + 1,
-)
+const purityState = ref<BasicState>('idle')
+const purityError = ref<BridgeError | null>(null)
+const purityEnd = ref<SpeedTestBasicEnd | null>(null)
+const purityStages = ref<SpeedTestStageData[]>([])
 
 const requestedStages = ref<SpeedTestStage[]>([])
+const requestedStageCount = computed(() => requestedStages.value.length)
+const loadedStageCount = computed(() => basicStages.value.length)
 
-async function startBasicTest(stages: SpeedTestStage[]): Promise<void> {
-  if (basicState.value === 'running') return
-  basicError.value = null
-  basicEnd.value = null
-  basicStages.value = []
-  activeStage.value = null
-  requestedStages.value = stages
-  basicState.value = 'running'
-  basicStartedAt = Date.now()
-  elapsedSeconds.value = 0
-  const result = await runSpeedTestBasic(stages, (stage) => {
-    basicStages.value = [...basicStages.value, stage]
-    activeStage.value = stage.stage
-  })
-  if (!active) return
+function stageLoaded(stage: SpeedTestStage): boolean {
+  return basicStages.value.some((item) => item.stage === stage)
+}
+
+function stageData(stage: SpeedTestStage): SpeedTestStageData | undefined {
+  return basicStages.value.find((item) => item.stage === stage)
+}
+
+function applyEnd(
+  result: SpeedTestBasicFetchResult,
+  stateRef: typeof basicState,
+  errorRef: typeof basicError,
+  endRef: typeof basicEnd,
+): void {
   if (result.kind === 'end') {
-    basicEnd.value = result.end
-    if (result.end.stages.length > 0) basicStages.value = result.end.stages
-    basicState.value = result.end.error ? 'error' : 'done'
+    endRef.value = result.end
+    stateRef.value = result.end.error ? 'error' : 'done'
     if (result.end.error) {
-      basicError.value = {
+      errorRef.value = {
         kind: 'daemon',
         code: 'speedtest_failed',
         reason: result.end.error,
@@ -143,26 +139,55 @@ async function startBasicTest(stages: SpeedTestStage[]): Promise<void> {
       }
     }
   } else {
-    basicError.value = result.error
-    basicState.value = 'error'
+    errorRef.value = result.error
+    stateRef.value = 'error'
   }
 }
 
-const loadedStageCount = computed(() => basicStages.value.length)
+async function startBasicTest(stages: SpeedTestStage[]): Promise<void> {
+  if (basicState.value === 'running' || purityState.value === 'running') return
+  basicError.value = null
+  basicEnd.value = null
+  basicStages.value = []
+  requestedStages.value = stages
+  basicState.value = 'running'
+  basicStartedAt = Date.now()
+  elapsedSeconds.value = 0
+  const result = await runSpeedTestBasic(stages, (stage) => {
+    basicStages.value = [...basicStages.value, stage]
+  })
+  if (!active) return
+  if (result.kind === 'end' && result.end.stages.length > 0) {
+    basicStages.value = result.end.stages
+  }
+  applyEnd(result, basicState, basicError, basicEnd)
+}
 
-function stageLoaded(stage: SpeedTestStage): boolean {
-  return basicStages.value.some((item) => item.stage === stage)
+async function startPurityCheck(): Promise<void> {
+  if (basicState.value === 'running' || purityState.value === 'running') return
+  purityError.value = null
+  purityEnd.value = null
+  purityStages.value = []
+  requestedStages.value = ['ip_purity']
+  purityState.value = 'running'
+  basicStartedAt = Date.now()
+  elapsedSeconds.value = 0
+  const result = await runSpeedTestBasic(['ip_purity'], (stage) => {
+    purityStages.value = [...purityStages.value, stage]
+  })
+  if (!active) return
+  if (result.kind === 'end' && result.end.stages.length > 0) {
+    purityStages.value = result.end.stages
+  }
+  applyEnd(result, purityState, purityError, purityEnd)
 }
 
 async function cancelBasicTest(): Promise<void> {
   const result = await cancelSpeedTest()
   if (result.kind === 'error') {
-    basicError.value = result.error
+    if (basicState.value === 'running') basicError.value = result.error
+    else purityError.value = result.error
   }
-}
-
-function stageData(stage: SpeedTestStage): SpeedTestStageData | undefined {
-  return basicStages.value.find((item) => item.stage === stage)
 }
 
 const latencyTargets = computed<LatencyTargetResult[]>(() => {
@@ -183,7 +208,7 @@ const domesticMeasurements = computed(() => {
 })
 
 const purity = computed(() => {
-  const data = stageData('ip_purity')
+  const data = purityStages.value.find((item) => item.stage === 'ip_purity')
   return data && data.stage === 'ip_purity' ? data.payload.purity : null
 })
 
@@ -400,6 +425,27 @@ function formatClock(value: number | null): string {
   return formatTimestamp(value)
 }
 
+function formatWifiSignalPercent(value: number | null): string {
+  return value === null ? '—' : `${value}%`
+}
+
+function formatWifiSignalDbm(value: number | null): string {
+  if (value === null) return '— dBm'
+  return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)} dBm`
+}
+
+function wifiSignalBarLevel(bars: string | null): number {
+  if (bars === null) return 0
+  return Math.min(4, Array.from(bars).filter((bar) => bar !== '_').length)
+}
+
+function wifiSignalLabel(network: WifiNetwork): string {
+  const percent = network.signalPercent === null ? '百分比未知' : `${network.signalPercent}%`
+  const dbm = network.signalDbm === null ? 'dBm 不可用' : formatWifiSignalDbm(network.signalDbm)
+  const bars = network.signalBars === null ? '信号格未知' : `${wifiSignalBarLevel(network.signalBars)} 格`
+  return `信号强度：${percent}，${dbm}，${bars}`
+}
+
 function formatMbps(bitsPerSecond: number | null): string {
   if (bitsPerSecond === null) return '—'
   return `${(bitsPerSecond / 1_000_000).toFixed(1)}`
@@ -472,7 +518,7 @@ onMounted(() => {
   void refresh()
   refreshTimer = window.setInterval(() => void refresh(), 2_000)
   elapsedTimer = window.setInterval(() => {
-    if (basicState.value === 'running') {
+    if (basicState.value === 'running' || purityState.value === 'running') {
       elapsedSeconds.value = Math.round((Date.now() - basicStartedAt) / 1000)
     } else if (iperfState.value === 'running') {
       elapsedSeconds.value = Math.round((Date.now() - iperfStartedAt) / 1000)
@@ -688,24 +734,25 @@ onBeforeUnmount(() => {
                   v-if="basicState !== 'running'"
                   class="speed-start"
                   type="button"
-                  :disabled="capabilityStatus(speedtestCapability) === 'unsupported'"
+                  :disabled="capabilityStatus(speedtestCapability) === 'unsupported' || purityState === 'running'"
                   @click="() => startBasicTest(['latency', 'bandwidth'])"
                 >
                   开始测速
                 </button>
                 <button v-else class="speed-secondary" type="button" @click="cancelBasicTest">取消</button>
+                <span v-if="purityState === 'running'" class="speed-last-run">IP 纯净度检测进行中，基础测速暂不可用</span>
               </div>
 
               <div v-if="basicState === 'idle'" class="speed-state">
                 <Hourglass :size="38" aria-hidden="true" />
                 <strong>尚未测速</strong>
-                <code>点击「开始测速」测量站点延迟、网络带宽与 IP 纯净度</code>
+                <code>点击「开始测速」并行测量站点延迟与网络带宽，逐项即时加载；IP 纯净度在右侧独立 tab</code>
               </div>
 
               <div v-else-if="basicState === 'running'" class="speed-state" role="status">
                 <LoaderCircle :size="38" class="is-spinning" aria-hidden="true" />
-                <strong>正在测量：{{ stageLabels[activeStage ?? 'latency'] }}</strong>
-                <code>阶段 {{ activeStageIndex }}/3 · 已运行 {{ elapsedSeconds }}s · 可在任一阶段间隙取消</code>
+                <strong>正在测量（已加载 {{ loadedStageCount }}/{{ requestedStages.length }} 项）</strong>
+                <code>已运行 {{ elapsedSeconds }}s · 各模块并行测量，完成即加载 · 可取消</code>
               </div>
 
               <template v-else>
@@ -948,7 +995,21 @@ onBeforeUnmount(() => {
                     <tbody>
                       <tr v-for="network in wifiResult.networks" :key="network.ssid + network.channel">
                         <th scope="row"><span>{{ network.ssid }}</span></th>
-                        <td class="speed-num">{{ network.signalPercent === null ? '—' : `${network.signalPercent}%` }}</td>
+                        <td class="wifi-signal-cell">
+                          <div class="wifi-signal" role="group" :aria-label="wifiSignalLabel(network)">
+                            <span v-if="network.signalBars" class="wifi-signal-bars" aria-hidden="true">
+                              <span
+                                v-for="level in 4"
+                                :key="level"
+                                class="wifi-signal-bar"
+                                :class="{ 'is-active': level <= wifiSignalBarLevel(network.signalBars) }"
+                              />
+                            </span>
+                            <span v-else class="wifi-signal-bars is-unknown" aria-hidden="true">—</span>
+                            <strong class="wifi-signal-percent">{{ formatWifiSignalPercent(network.signalPercent) }}</strong>
+                            <small class="wifi-signal-dbm">{{ formatWifiSignalDbm(network.signalDbm) }}</small>
+                          </div>
+                        </td>
                         <td class="speed-num">{{ network.channel ?? '—' }}</td>
                         <td>{{ network.band ?? '—' }}</td>
                         <td><code>{{ network.security ?? '—' }}</code></td>
@@ -987,42 +1048,42 @@ onBeforeUnmount(() => {
                   network.speedtest.v1
                 </span>
                 <code class="speed-capability-reason">{{ speedtestCapability?.reason ?? 'capability_unknown' }}</code>
-                <span v-if="basicEnd" class="speed-last-run">上次检测 {{ formatClock(basicEnd.endedAtUnixMs) }}</span>
+                <span v-if="purityEnd" class="speed-last-run">上次检测 {{ formatClock(purityEnd.endedAtUnixMs) }}</span>
                 <button
-                  v-if="basicState !== 'running'"
+                  v-if="purityState !== 'running'"
                   class="speed-start"
                   type="button"
-                  :disabled="capabilityStatus(speedtestCapability) === 'unsupported'"
-                  @click="() => startBasicTest(['ip_purity'])"
+                  :disabled="capabilityStatus(speedtestCapability) === 'unsupported' || basicState === 'running'"
+                  @click="startPurityCheck"
                 >
                   检测
                 </button>
                 <button v-else class="speed-secondary" type="button" @click="cancelBasicTest">取消</button>
               </div>
 
-              <div v-if="basicState === 'idle'" class="speed-state">
+              <div v-if="purityState === 'idle'" class="speed-state">
                 <Hourglass :size="38" aria-hidden="true" />
                 <strong>尚未检测</strong>
-                <code>点击「检测」查询出口 IP 基础事实与风险值（ip-api.com + ipok.io）</code>
+                <code>点击「检测」查询出口 IP 基础事实与风险值（ip-api.com + ipok.io）· 与基础测速相互独立</code>
               </div>
 
-              <div v-else-if="basicState === 'running'" class="speed-state" role="status">
+              <div v-else-if="purityState === 'running'" class="speed-state" role="status">
                 <LoaderCircle :size="38" class="is-spinning" aria-hidden="true" />
                 <strong>正在检测 IP 风险…</strong>
                 <code>已运行 {{ elapsedSeconds }}s · 查询 ip-api.com 与 ipok.io</code>
               </div>
 
               <template v-else>
-                <div v-if="basicError" class="speed-refresh-error" role="status">
+                <div v-if="purityError" class="speed-refresh-error" role="status">
                   <CircleAlert :size="16" aria-hidden="true" />
                   <span>检测失败</span>
-                  <code>{{ basicError.reason }}</code>
-                  <button class="network-secondary-button" type="button" @click="() => startBasicTest(['ip_purity'])">
+                  <code>{{ purityError.reason }}</code>
+                  <button class="network-secondary-button" type="button" @click="startPurityCheck">
                     <RefreshCw :size="15" aria-hidden="true" />
                     <span>重试</span>
                   </button>
                 </div>
-                <div v-else-if="basicEnd?.cancelled" class="speed-refresh-error" role="status">
+                <div v-else-if="purityEnd?.cancelled" class="speed-refresh-error" role="status">
                   <CircleAlert :size="16" aria-hidden="true" />
                   <span>检测已取消</span>
                   <code>cancelled_by_user</code>

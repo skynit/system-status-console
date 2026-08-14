@@ -1360,6 +1360,15 @@ code,
   color: #66686d;
 }
 
+.remote-workspace-state.remote-file-connect-placeholder {
+  min-height: clamp(360px, 52dvh, 560px);
+  gap: 16px;
+  padding: 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .remote-primary-button,
 .transfer-primary-button,
 .notes-primary-button,
@@ -1409,6 +1418,31 @@ code,
   border-color: var(--atr-lavender);
   background: var(--atr-lavender);
   color: var(--atr-ink);
+}
+
+.applications-console .usage-period-control {
+  gap: 8px;
+  overflow: visible;
+  background: transparent;
+}
+
+.applications-console .usage-period-control button {
+  border: 1px solid var(--atr-rule);
+  border-radius: 22px;
+}
+
+.applications-console .usage-period-control button:hover:not(:disabled),
+.applications-console .usage-period-control button.is-active {
+  border-color: var(--atr-lavender);
+}
+
+.applications-console .usage-table-wrap {
+  border: 0;
+  background: transparent;
+}
+
+.applications-console .usage-table thead th {
+  border-top: 1px solid var(--atr-ink);
 }
 
 .danger-action,

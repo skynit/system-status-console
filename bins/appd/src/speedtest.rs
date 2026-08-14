@@ -554,7 +554,7 @@ impl SpeedTestHandle {
                 .args([
                     "-t",
                     "-f",
-                    "SSID,SIGNAL,CHAN,SECURITY,BAND",
+                    "BSSID,SSID,SIGNAL,BARS,CHAN,SECURITY,BAND,DEVICE",
                     "dev",
                     "wifi",
                     "list",
@@ -593,33 +593,68 @@ impl SpeedTestHandle {
             };
         }
         let text = String::from_utf8_lossy(&output.stdout);
-        let mut networks = Vec::new();
-        for line in text.lines() {
-            if line.is_empty() {
-                continue;
-            }
-            let fields = split_terse(line);
-            if fields.len() < 5 {
-                continue;
-            }
-            networks.push(WifiNetwork {
-                ssid: if fields[0].is_empty() {
-                    "（隐藏网络）".to_owned()
-                } else {
-                    fields[0].clone()
-                },
-                signal_percent: fields[1].parse::<u32>().ok(),
-                channel: fields[2].parse::<u32>().ok(),
-                security: Some(fields[3].clone()),
-                band: Some(fields[4].clone()),
-            });
-        }
+        let rows = text
+            .lines()
+            .filter(|line| !line.is_empty())
+            .filter_map(parse_nmcli_wifi_row)
+            .collect::<Vec<_>>();
+        let signal_dbm_by_bssid = self.wifi_signal_dbm_by_bssid(&rows).await;
+        let networks = rows
+            .into_iter()
+            .map(|row| WifiNetwork {
+                ssid: row.ssid,
+                signal_percent: row.signal_percent,
+                signal_dbm: signal_dbm_by_bssid.get(&row.bssid).copied(),
+                signal_bars: row.signal_bars,
+                channel: row.channel,
+                security: row.security,
+                band: row.band,
+            })
+            .collect::<Vec<_>>();
+        let has_signal_dbm = networks.iter().any(|network| network.signal_dbm.is_some());
         WifiScanResult {
             scanned_at_unix_ms: scanned_at,
-            source: "nmcli".to_owned(),
+            source: if !has_signal_dbm {
+                "nmcli".to_owned()
+            } else {
+                "nmcli + iw scan dump".to_owned()
+            },
             networks,
             error: None,
         }
+    }
+
+    async fn wifi_signal_dbm_by_bssid(
+        &self,
+        rows: &[NmcliWifiRow],
+    ) -> HashMap<String, i32> {
+        let Some(iw) = self.tools.iw.as_deref() else {
+            return HashMap::new();
+        };
+        let devices = rows
+            .iter()
+            .filter_map(|row| row.device.as_deref())
+            .collect::<HashSet<_>>();
+        let mut signals = HashMap::new();
+        for device in devices {
+            let output = timeout(
+                Duration::from_secs(3),
+                Command::new(iw)
+                    .args(["dev", device, "scan", "dump"])
+                    .output(),
+            )
+            .await;
+            let Ok(Ok(output)) = output else {
+                continue;
+            };
+            if !output.status.success() {
+                continue;
+            }
+            signals.extend(parse_iw_scan_signal_dbm(&String::from_utf8_lossy(
+                &output.stdout,
+            )));
+        }
+        signals
     }
 
     fn linssid_launch(&self) -> LinssidLaunchResult {
@@ -656,6 +691,76 @@ impl SpeedTestHandle {
             },
         }
     }
+}
+
+#[derive(Debug, PartialEq)]
+struct NmcliWifiRow {
+    bssid: String,
+    ssid: String,
+    signal_percent: Option<u32>,
+    signal_bars: Option<String>,
+    channel: Option<u32>,
+    security: Option<String>,
+    band: Option<String>,
+    device: Option<String>,
+}
+
+fn non_empty_field(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn parse_nmcli_wifi_row(line: &str) -> Option<NmcliWifiRow> {
+    let fields = split_terse(line);
+    if fields.len() < 8 || fields[0].is_empty() {
+        return None;
+    }
+    Some(NmcliWifiRow {
+        bssid: fields[0].to_ascii_lowercase(),
+        ssid: if fields[1].is_empty() {
+            "（隐藏网络）".to_owned()
+        } else {
+            fields[1].clone()
+        },
+        signal_percent: fields[2].parse::<u32>().ok(),
+        signal_bars: non_empty_field(&fields[3]),
+        channel: fields[4].parse::<u32>().ok(),
+        security: non_empty_field(&fields[5]),
+        band: non_empty_field(&fields[6]),
+        device: non_empty_field(&fields[7]),
+    })
+}
+
+fn parse_iw_scan_signal_dbm(text: &str) -> HashMap<String, i32> {
+    let mut signals = HashMap::new();
+    let mut current_bssid: Option<String> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("BSS ") {
+            current_bssid = rest
+                .split_whitespace()
+                .next()
+                .and_then(|token| token.split('(').next())
+                .filter(|bssid| !bssid.is_empty())
+                .map(str::to_ascii_lowercase);
+            continue;
+        }
+        let Some(signal) = line.strip_prefix("signal:") else {
+            continue;
+        };
+        let Some(bssid) = current_bssid.as_ref() else {
+            continue;
+        };
+        let Some(value) = signal
+            .split_whitespace()
+            .next()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+        else {
+            continue;
+        };
+        signals.insert(bssid.clone(), value.round() as i32);
+    }
+    signals
 }
 
 fn split_terse(line: &str) -> Vec<String> {
@@ -1127,6 +1232,29 @@ mod tests {
             split_terse(r"My\:Net:77:6:WPA2:2.4 GHz"),
             vec!["My:Net", "77", "6", "WPA2", "2.4 GHz"]
         );
+    }
+
+    #[test]
+    fn nmcli_wifi_rows_include_native_bars_and_device_identity() {
+        let row = parse_nmcli_wifi_row(
+            r"08\:9B\:4B\:15\:0A\:91:Rhino-5G:82:▂▄▆█:36:WPA2 WPA3:5 GHz:wlan0",
+        )
+        .expect("valid nmcli WiFi row");
+        assert_eq!(row.bssid, "08:9b:4b:15:0a:91");
+        assert_eq!(row.ssid, "Rhino-5G");
+        assert_eq!(row.signal_percent, Some(82));
+        assert_eq!(row.signal_bars.as_deref(), Some("▂▄▆█"));
+        assert_eq!(row.device.as_deref(), Some("wlan0"));
+    }
+
+    #[test]
+    fn iw_scan_dump_maps_bssid_to_rounded_dbm() {
+        let signals = parse_iw_scan_signal_dbm(
+            "BSS 08:9b:4b:15:0a:91(on wlan0) -- associated\n\tsignal: -59.00 dBm\n\
+             BSS da:b2:aa:7b:4c:95(on wlan0)\n\tsignal: -72.60 dBm\n",
+        );
+        assert_eq!(signals.get("08:9b:4b:15:0a:91"), Some(&-59));
+        assert_eq!(signals.get("da:b2:aa:7b:4c:95"), Some(&-73));
     }
 
     #[test]

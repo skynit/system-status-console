@@ -468,6 +468,29 @@ describe('NetworkView speedtest tab', () => {
     wrapper.unmount()
   })
 
+  it('keeps the purity tab independent while the basic test is running', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    mockedBasic.mockReturnValue(new Promise(() => {}))
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('.speed-start').trigger('click')
+    await flushPromises()
+
+    expect(mockedBasic).toHaveBeenCalledWith(['latency', 'bandwidth'], expect.any(Function))
+    expect(wrapper.text()).toContain('正在测量')
+    // switch to the purity tab: it must stay idle, not "正在检测"
+    await wrapper.findAll('.speed-segment')[2].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('尚未检测')
+    expect(wrapper.text()).not.toContain('正在检测 IP 风险')
+    // its 检测 button is disabled while the basic run is active
+    expect(wrapper.get('.speed-start').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
   it('cancels a running basic test', async () => {
     mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
     mockedCapabilities.mockResolvedValue(speedtestCapabilities())
@@ -548,7 +571,15 @@ describe('NetworkView speedtest tab', () => {
               scannedAtUnixMs: 1_000,
               source: 'nmcli',
               networks: [
-                { ssid: 'Rhino-5G', signalPercent: 100, channel: 36, band: '5 GHz', security: 'WPA2 WPA3' },
+                {
+                  ssid: 'Rhino-5G',
+                  signalPercent: 100,
+                  signalDbm: -41,
+                  signalBars: '▂▄▆█',
+                  channel: 36,
+                  band: '5 GHz',
+                  security: 'WPA2 WPA3',
+                },
               ],
               error: null,
             },
@@ -581,6 +612,9 @@ describe('NetworkView speedtest tab', () => {
     await scanButton!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Rhino-5G')
+    expect(wrapper.text()).toContain('-41 dBm')
+    expect(wrapper.get('.wifi-signal').attributes('aria-label')).toBe('信号强度：100%，-41 dBm，4 格')
+    expect(wrapper.findAll('.wifi-signal-bar.is-active')).toHaveLength(4)
     expect(wrapper.text()).toContain('WPA2 WPA3')
 
     const linssidButton = wrapper.findAll('.speed-secondary').find((button) => button.text().includes('启动 LinSSID'))

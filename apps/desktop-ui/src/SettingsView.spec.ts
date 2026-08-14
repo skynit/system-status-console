@@ -176,6 +176,8 @@ describe('SettingsView', () => {
   it('shows six not-implemented configuration entries', async () => {
     const wrapper = await mountReady()
 
+    expect(wrapper.get('#settings-panel-apps').exists()).toBe(true)
+    expect(wrapper.findAll('#settings-panel-apps .settings-group-title')).toHaveLength(5)
     expect(wrapper.text()).toContain('采集周期')
     expect(wrapper.text()).toContain('数据保留期')
     expect(wrapper.text()).toContain('通知')

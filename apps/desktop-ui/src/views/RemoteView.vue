@@ -1809,8 +1809,8 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-show="activeProtocol !== 'ssh'" class="remote-protocol-workspace">
-          <div v-if="!fileSession" class="remote-workspace-state">
-            <FolderOpen :size="42" aria-hidden="true" />
+          <div v-if="!fileSession" class="remote-workspace-state remote-file-connect-placeholder">
+            <FolderOpen :size="48" aria-hidden="true" />
             <strong>{{ selectedProfile ? `浏览 ${selectedProfile.profile.label}` : activeProtocol === 'smb' ? '创建或选择 SMB 配置' : `选择或创建 ${protocolLabel(activeProtocol)} 配置` }}</strong>
             <span v-if="activeProtocol === 'smb' && !selectedProfile">连接后浏览共享与文件</span>
             <code v-else-if="!selectedProfile">remote_profile_required</code>

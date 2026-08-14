@@ -500,6 +500,7 @@ describe('ApplicationsView', () => {
     await flushPromises()
 
     const daily = wrapper.get('[data-usage-period="daily"]')
+    expect(wrapper.get('.usage-table-wrap').exists()).toBe(true)
     expect(daily.attributes('role')).toBe('tab')
     expect(daily.attributes('aria-selected')).toBe('true')
 

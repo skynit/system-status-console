@@ -1254,6 +1254,7 @@ describe('RemoteView', () => {
 
     expect(wrapper.text()).toContain('remote_session_not_found')
     expect(wrapper.text()).toContain('连接并浏览')
+    expect(wrapper.get('.remote-workspace-state.remote-file-connect-placeholder').exists()).toBe(true)
     expect(wrapper.find('.remote-file-browser').exists()).toBe(false)
     wrapper.unmount()
   })

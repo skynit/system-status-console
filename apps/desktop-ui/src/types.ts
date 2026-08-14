@@ -925,6 +925,8 @@ export interface Iperf3Result {
 export interface WifiNetwork {
   ssid: string
   signalPercent: number | null
+  signalDbm: number | null
+  signalBars: string | null
   channel: number | null
   band: string | null
   security: string | null

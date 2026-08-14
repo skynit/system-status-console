@@ -27,6 +27,7 @@ import {
   listTransfers,
   listNotes,
   listRemoteDirectory,
+  normalizeSpeedTestDeepOutput,
   openRemoteTerminal,
   pickDownloadDestination,
   pickUploadSource,
@@ -2162,6 +2163,63 @@ describe('remote frontend contracts', () => {
       error: { code: 'remote_terminal_read_limit_invalid' },
     })
     expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+
+  it('normalizes WiFi dBm and bars without deriving missing measurements', () => {
+    expect(normalizeSpeedTestDeepOutput({
+      type: 'wifi_scan',
+      payload: {
+        scanned_at_unix_ms: 1_000,
+        source: 'nmcli + iw scan dump',
+        networks: [{
+          ssid: 'Rhino-5G',
+          signal_percent: 82,
+          signal_dbm: -59,
+          signal_bars: '▂▄▆█',
+          channel: 36,
+          band: '5 GHz',
+          security: 'WPA2 WPA3',
+        }],
+        error: null,
+      },
+    })).toEqual({
+      type: 'wifi_scan',
+      payload: {
+        scannedAtUnixMs: 1_000,
+        source: 'nmcli + iw scan dump',
+        networks: [{
+          ssid: 'Rhino-5G',
+          signalPercent: 82,
+          signalDbm: -59,
+          signalBars: '▂▄▆█',
+          channel: 36,
+          band: '5 GHz',
+          security: 'WPA2 WPA3',
+        }],
+        error: null,
+      },
+    })
+
+    expect(normalizeSpeedTestDeepOutput({
+      type: 'wifi_scan',
+      payload: {
+        scanned_at_unix_ms: 1_001,
+        source: 'nmcli',
+        networks: [{
+          ssid: 'No cached dBm',
+          signal_percent: 40,
+          signal_dbm: null,
+          signal_bars: '▂▄__',
+          channel: 11,
+          band: '2.4 GHz',
+          security: 'WPA2',
+        }],
+        error: null,
+      },
+    })).toMatchObject({
+      type: 'wifi_scan',
+      payload: { networks: [{ signalDbm: null, signalBars: '▂▄__' }] },
+    })
   })
 
   it('rejects invalid secret bytes and malformed references before invoking Tauri', async () => {

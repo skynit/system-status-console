@@ -3030,6 +3030,8 @@ function normalizeWifiScan(value: unknown): WifiScanResult | null {
     networks.push({
       ssid: network.ssid,
       signalPercent: asNullableNumber(network.signal_percent),
+      signalDbm: asNullableNumber(network.signal_dbm),
+      signalBars: asNullableString(network.signal_bars),
       channel: asNullableNumber(network.channel),
       band: asNullableString(network.band),
       security: asNullableString(network.security),

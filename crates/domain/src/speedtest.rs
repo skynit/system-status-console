@@ -477,6 +477,32 @@ mod tests {
     }
 
     #[test]
+    fn wifi_scan_validation_bounds_signal_facts() {
+        let valid = WifiScanResult {
+            scanned_at_unix_ms: 1,
+            source: "nmcli + iw scan dump".to_owned(),
+            networks: vec![WifiNetwork {
+                ssid: "Rhino-5G".to_owned(),
+                signal_percent: Some(82),
+                signal_dbm: Some(-59),
+                signal_bars: Some("▂▄▆█".to_owned()),
+                channel: Some(36),
+                band: Some("5 GHz".to_owned()),
+                security: Some("WPA2 WPA3".to_owned()),
+            }],
+            error: None,
+        };
+        assert!(valid.validate());
+
+        let mut invalid = valid.clone();
+        invalid.networks[0].signal_percent = Some(101);
+        assert!(!invalid.validate());
+        invalid.networks[0].signal_percent = Some(82);
+        invalid.networks[0].signal_dbm = Some(-201);
+        assert!(!invalid.validate());
+    }
+
+    #[test]
     fn deep_output_matches_command_kind() {
         let start = SpeedTestDeepCommand::Iperf3Start {
             server: "h".to_owned(),
