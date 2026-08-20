@@ -15,7 +15,7 @@ const navigation = [
   { label: '网络', to: '/network', name: 'network', index: '03', english: 'NETWORK' },
   { label: '远程连接', to: '/remote', name: 'remote', index: '04', english: 'REMOTE' },
   { label: '传输队列', to: '/transfers', name: 'transfers', index: '05', english: 'TRANSFERS' },
-  { label: '备忘录', to: '/memos', name: 'memos', index: '06', english: 'MEMOS' },
+  { label: '日志', to: '/journal', name: 'journal', index: '06', english: 'JOURNAL' },
   { label: '设置', to: '/settings', name: 'settings', index: '07', english: 'SETTINGS' },
 ] as const
 
@@ -110,7 +110,7 @@ async function closeMobileNav() {
       <div class="view-region" :class="{ 'is-operations-workspace': operationsWorkspaceActive }">
         <RouterView v-slot="{ Component }">
           <Transition name="route-enter">
-            <KeepAlive include="RemoteView">
+            <KeepAlive include="RemoteView,MemosView">
               <component :is="Component" :key="route.name" />
             </KeepAlive>
           </Transition>

@@ -7,11 +7,11 @@
 //! missing the corresponding capability reports `unsupported` with a reason.
 
 use localdesk_domain::{
-    BandwidthKind, BandwidthMeasurement, CapabilityRuntimeState, Iperf3Direction, Iperf3Result,
-    IpPurityResult, IpRiskSource, LatencyProbe, LatencyTargetResult, LinssidLaunchResult,
+    BandwidthKind, BandwidthMeasurement, CapabilityRuntimeState, IpPurityResult, IpRiskSource,
+    Iperf3Direction, Iperf3Result, LatencyProbe, LatencyTargetResult, LinssidLaunchResult,
     SPEEDTEST_LATENCY_PROBES_PER_TARGET, SPEEDTEST_SCHEMA_VERSION, SpeedTestBasicEnd,
-    SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestStage,
-    SpeedTestStageData, WifiNetwork, WifiScanResult,
+    SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestRunKind,
+    SpeedTestStage, SpeedTestStageData, WifiNetwork, WifiScanResult,
 };
 use localdesk_ipc::SpeedTestStreamEvent;
 use std::{
@@ -34,29 +34,30 @@ const LATENCY_PROBES: usize = SPEEDTEST_LATENCY_PROBES_PER_TARGET;
 
 const CLOUDFLARE_DOWNLOAD_URL: &str = "https://speed.cloudflare.com/__down?bytes=25000000";
 const CLOUDFLARE_UPLOAD_URL: &str = "https://speed.cloudflare.com/__up";
-const CLOUDFLARE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20);
-const CLOUDFLARE_UPLOAD_TIMEOUT: Duration = Duration::from_secs(25);
+const CLOUDFLARE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(22);
+const CLOUDFLARE_UPLOAD_TIMEOUT: Duration = Duration::from_secs(27);
 const CLOUDFLARE_UPLOAD_BODY_BYTES: u64 = 8 * 1024 * 1024;
+const CLOUDFLARE_PARALLEL_STREAMS: u8 = 4;
 
 const DOMESTIC_MIRRORS: &[(&str, &str)] = &[
     (
         "阿里云",
-        "https://mirrors.aliyun.com/ubuntu-releases/24.04/ubuntu-24.04.2-desktop-amd64.iso",
+        "https://mirrors.aliyun.com/ubuntu/dists/noble/Contents-amd64.gz",
     ),
     (
         "中科大",
-        "https://mirrors.ustc.edu.cn/ubuntu-releases/24.04/ubuntu-24.04.2-desktop-amd64.iso",
+        "https://mirrors.ustc.edu.cn/ubuntu/dists/noble/Contents-amd64.gz",
     ),
     (
         "清华",
-        "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-releases/24.04/ubuntu-24.04.2-desktop-amd64.iso",
+        "https://mirrors.tuna.tsinghua.edu.cn/ubuntu/dists/noble/Contents-amd64.gz",
     ),
     (
         "腾讯",
-        "https://mirrors.cloud.tencent.com/ubuntu-releases/24.04/ubuntu-24.04.2-desktop-amd64.iso",
+        "https://mirrors.cloud.tencent.com/ubuntu/dists/noble/Contents-amd64.gz",
     ),
 ];
-const MIRROR_TIMEOUT: Duration = Duration::from_secs(12);
+const MIRROR_TIMEOUT: Duration = Duration::from_secs(14);
 
 const IP_API_URL: &str = "http://ip-api.com/json/?fields=status,country,regionName,city,isp,org,as,asname,proxy,hosting,mobile,query";
 const IP_API_TIMEOUT: Duration = Duration::from_secs(6);
@@ -87,6 +88,14 @@ impl Tools {
     }
 
     fn speedtest_capability(&self) -> CapabilityRuntimeState {
+        if self.curl.is_some() {
+            CapabilityRuntimeState::healthy("curl_available")
+        } else {
+            CapabilityRuntimeState::unsupported("curl_missing")
+        }
+    }
+
+    fn ip_purity_capability(&self) -> CapabilityRuntimeState {
         if self.curl.is_some() {
             CapabilityRuntimeState::healthy("curl_available")
         } else {
@@ -142,6 +151,14 @@ impl SpeedTestError {
     fn busy() -> Self {
         Self::new("speedtest_busy", "speedtest_already_running", true)
     }
+
+    fn stage_groups_mixed() -> Self {
+        Self::new(
+            "speedtest_stages_invalid",
+            "speedtest_stage_groups_mixed",
+            false,
+        )
+    }
 }
 
 fn now_unix_ms() -> i64 {
@@ -190,12 +207,89 @@ fn bits_per_second(bytes_per_second: Option<u64>) -> Option<u64> {
     bytes_per_second.map(|bytes| bytes.saturating_mul(8))
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct BandwidthStreamSample {
+    bits_per_second: Option<u64>,
+    http_code: Option<u16>,
+    error: Option<String>,
+}
+
+fn parse_bandwidth_stream(run: CurlRun, speed_index: usize) -> BandwidthStreamSample {
+    let parts: Vec<&str> = run.stdout.split_whitespace().collect();
+    let http_code = parts.first().and_then(|value| value.parse::<u16>().ok());
+    let bytes_per_second = parts.get(speed_index).and_then(|value| parse_u64(value));
+    let exit_error = match run.exit {
+        Some(0 | 28) => None,
+        Some(exit) => Some(curl_error_reason(exit)),
+        None => Some("curl_exit_signal".to_owned()),
+    };
+    let http_error = match http_code {
+        Some(200..=299) => None,
+        Some(code) => Some(format!("http_{code}")),
+        None => Some("http_status_missing".to_owned()),
+    };
+    let speed_error = match bytes_per_second {
+        Some(0) => Some("bandwidth_speed_zero".to_owned()),
+        Some(_) => None,
+        None => Some("bandwidth_speed_missing".to_owned()),
+    };
+    let error = exit_error.or(http_error).or(speed_error);
+    let bits_per_second = error
+        .is_none()
+        .then(|| bits_per_second(bytes_per_second))
+        .flatten();
+    BandwidthStreamSample {
+        bits_per_second,
+        http_code,
+        error,
+    }
+}
+
+fn aggregate_bandwidth_streams(
+    samples: Vec<BandwidthStreamSample>,
+    expected_streams: u8,
+) -> BandwidthStreamSample {
+    let http_code = samples.iter().find_map(|sample| sample.http_code);
+    let mut total = 0_u64;
+    let mut succeeded = 0_u8;
+    let mut first_error = None;
+    for sample in samples {
+        match (sample.bits_per_second, sample.error) {
+            (Some(bits), None) => {
+                total = total.saturating_add(bits);
+                succeeded = succeeded.saturating_add(1);
+            }
+            (_, error) => {
+                if first_error.is_none() {
+                    first_error = error.or_else(|| Some("bandwidth_stream_failed".to_owned()));
+                }
+            }
+        }
+    }
+    let error = if succeeded == expected_streams {
+        None
+    } else if succeeded == 0 {
+        first_error
+    } else {
+        Some(format!(
+            "bandwidth_streams_partial_{succeeded}_of_{expected_streams}"
+        ))
+    };
+    BandwidthStreamSample {
+        bits_per_second: (succeeded > 0).then_some(total),
+        http_code,
+        error,
+    }
+}
+
 /// Shared state for a single basic-test run and a single iperf3 run.
 #[derive(Clone)]
 pub struct SpeedTestHandle {
     tools: Tools,
-    cancel: Arc<AtomicBool>,
+    basic_cancel: Arc<AtomicBool>,
+    purity_cancel: Arc<AtomicBool>,
     basic_busy: Arc<AtomicBool>,
+    purity_busy: Arc<AtomicBool>,
     iperf3_busy: Arc<AtomicBool>,
     iperf3_pid: Arc<Mutex<Option<u32>>>,
 }
@@ -204,16 +298,25 @@ impl SpeedTestHandle {
     pub fn new() -> Self {
         Self {
             tools: Tools::detect(),
-            cancel: Arc::new(AtomicBool::new(false)),
+            basic_cancel: Arc::new(AtomicBool::new(false)),
+            purity_cancel: Arc::new(AtomicBool::new(false)),
             basic_busy: Arc::new(AtomicBool::new(false)),
+            purity_busy: Arc::new(AtomicBool::new(false)),
             iperf3_busy: Arc::new(AtomicBool::new(false)),
             iperf3_pid: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub fn capability_states(&self) -> (CapabilityRuntimeState, CapabilityRuntimeState) {
+    pub fn capability_states(
+        &self,
+    ) -> (
+        CapabilityRuntimeState,
+        CapabilityRuntimeState,
+        CapabilityRuntimeState,
+    ) {
         (
             self.tools.speedtest_capability(),
+            self.tools.ip_purity_capability(),
             self.tools.deeptest_capability(),
         )
     }
@@ -224,13 +327,19 @@ impl SpeedTestHandle {
         &self,
         stages: Vec<SpeedTestStage>,
     ) -> Result<mpsc::Receiver<SpeedTestStreamEvent>, SpeedTestError> {
-        if self.basic_busy.swap(true, Ordering::AcqRel) {
+        let run_kind =
+            SpeedTestRunKind::classify(&stages).ok_or_else(SpeedTestError::stage_groups_mixed)?;
+        let (cancel, busy) = match run_kind {
+            SpeedTestRunKind::Basic => (&self.basic_cancel, &self.basic_busy),
+            SpeedTestRunKind::IpPurity => (&self.purity_cancel, &self.purity_busy),
+        };
+        if busy.swap(true, Ordering::AcqRel) {
             return Err(SpeedTestError::busy());
         }
-        self.cancel.store(false, Ordering::Release);
+        cancel.store(false, Ordering::Release);
         let (sender, receiver) = mpsc::channel(8);
-        let cancel = Arc::clone(&self.cancel);
-        let basic_busy = Arc::clone(&self.basic_busy);
+        let cancel = Arc::clone(cancel);
+        let busy = Arc::clone(busy);
         let tools = self.tools.clone();
         tokio::spawn(async move {
             let started_at = now_unix_ms();
@@ -252,7 +361,9 @@ impl SpeedTestHandle {
                         },
                     };
                     // Client may have gone away; ignore send failures.
-                    let _ = stage_sender.send(SpeedTestStreamEvent::Stage(data.clone())).await;
+                    let _ = stage_sender
+                        .send(SpeedTestStreamEvent::Stage(data.clone()))
+                        .await;
                     data
                 }));
             }
@@ -277,15 +388,20 @@ impl SpeedTestHandle {
                 error: None,
             };
             let _ = sender.send(SpeedTestStreamEvent::End(Box::new(end))).await;
-            basic_busy.store(false, Ordering::Release);
+            busy.store(false, Ordering::Release);
         });
         Ok(receiver)
     }
 
-    pub fn cancel(&self) -> SpeedTestCancelResult {
-        let running = self.basic_busy.load(Ordering::Acquire);
-        self.cancel.store(true, Ordering::Release);
+    pub fn cancel(&self, run_kind: SpeedTestRunKind) -> SpeedTestCancelResult {
+        let (cancel, busy) = match run_kind {
+            SpeedTestRunKind::Basic => (&self.basic_cancel, &self.basic_busy),
+            SpeedTestRunKind::IpPurity => (&self.purity_cancel, &self.purity_busy),
+        };
+        let running = busy.load(Ordering::Acquire);
+        cancel.store(true, Ordering::Release);
         SpeedTestCancelResult {
+            run_kind,
             cancelled: running,
             reason: if running {
                 "cancellation_requested".to_owned()
@@ -316,15 +432,15 @@ impl SpeedTestHandle {
                 self.iperf3_busy.store(false, Ordering::Release);
                 Ok(SpeedTestDeepOutput::Iperf3(result))
             }
-            SpeedTestDeepCommand::Iperf3Stop => Ok(SpeedTestDeepOutput::Iperf3(
-                self.stop_iperf3().await,
-            )),
-            SpeedTestDeepCommand::WifiScan => Ok(SpeedTestDeepOutput::WifiScan(
-                self.wifi_scan().await,
-            )),
-            SpeedTestDeepCommand::LinssidLaunch => Ok(SpeedTestDeepOutput::Linssid(
-                self.linssid_launch(),
-            )),
+            SpeedTestDeepCommand::Iperf3Stop => {
+                Ok(SpeedTestDeepOutput::Iperf3(self.stop_iperf3().await))
+            }
+            SpeedTestDeepCommand::WifiScan => {
+                Ok(SpeedTestDeepOutput::WifiScan(self.wifi_scan().await))
+            }
+            SpeedTestDeepCommand::LinssidLaunch => {
+                Ok(SpeedTestDeepOutput::Linssid(self.linssid_launch()))
+            }
         }
     }
 
@@ -461,8 +577,10 @@ impl SpeedTestHandle {
             let reason = if stderr.is_empty() {
                 format!("iperf3_exit_{:?}", status.code())
             } else {
-                let mut reason =
-                    stderr.chars().take(IPERF3_STDERR_REASON_BYTES).collect::<String>();
+                let mut reason = stderr
+                    .chars()
+                    .take(IPERF3_STDERR_REASON_BYTES)
+                    .collect::<String>();
                 if stderr.len() > IPERF3_STDERR_REASON_BYTES {
                     reason.push('…');
                 }
@@ -586,10 +704,7 @@ impl SpeedTestHandle {
                 scanned_at_unix_ms: scanned_at,
                 source: "nmcli".to_owned(),
                 networks: Vec::new(),
-                error: Some(format!(
-                    "nmcli_exit_{:?}",
-                    output.status.code()
-                )),
+                error: Some(format!("nmcli_exit_{:?}", output.status.code())),
             };
         }
         let text = String::from_utf8_lossy(&output.stdout);
@@ -624,10 +739,7 @@ impl SpeedTestHandle {
         }
     }
 
-    async fn wifi_signal_dbm_by_bssid(
-        &self,
-        rows: &[NmcliWifiRow],
-    ) -> HashMap<String, i32> {
+    async fn wifi_signal_dbm_by_bssid(&self, rows: &[NmcliWifiRow]) -> HashMap<String, i32> {
         let Some(iw) = self.tools.iw.as_deref() else {
             return HashMap::new();
         };
@@ -832,10 +944,7 @@ async fn run_latency_stage(cancel: &Arc<AtomicBool>) -> Vec<LatencyTargetResult>
         if probes.is_empty() {
             break;
         }
-        let ttfb_values: Vec<u32> = probes
-            .iter()
-            .filter_map(|probe| probe.ttfb_ms)
-            .collect();
+        let ttfb_values: Vec<u32> = probes.iter().filter_map(|probe| probe.ttfb_ms).collect();
         let avg_ttfb_ms = (!ttfb_values.is_empty())
             .then(|| ttfb_values.iter().sum::<u32>() / ttfb_values.len() as u32);
         targets.push(LatencyTargetResult {
@@ -879,6 +988,38 @@ async fn run_bandwidth_stage(cancel: &Arc<AtomicBool>) -> Vec<BandwidthMeasureme
 }
 
 async fn run_international_measurement() -> BandwidthMeasurement {
+    let download = run_parallel_download().await;
+    let upload = run_parallel_upload().await;
+
+    BandwidthMeasurement {
+        kind: BandwidthKind::International,
+        label: "国际线路".to_owned(),
+        source: "speed.cloudflare.com".to_owned(),
+        parallel_streams: CLOUDFLARE_PARALLEL_STREAMS,
+        download_bits_per_second: download.bits_per_second,
+        upload_bits_per_second: upload.bits_per_second,
+        http_code: download.http_code.or(upload.http_code),
+        error: download.error.or(upload.error),
+    }
+}
+
+async fn run_parallel_download() -> BandwidthStreamSample {
+    let mut tasks = Vec::with_capacity(usize::from(CLOUDFLARE_PARALLEL_STREAMS));
+    for _ in 0..CLOUDFLARE_PARALLEL_STREAMS {
+        tasks.push(tokio::spawn(run_download_stream()));
+    }
+    let mut samples = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        samples.push(task.await.unwrap_or(BandwidthStreamSample {
+            bits_per_second: None,
+            http_code: None,
+            error: Some("bandwidth_stream_join_failed".to_owned()),
+        }));
+    }
+    aggregate_bandwidth_streams(samples, CLOUDFLARE_PARALLEL_STREAMS)
+}
+
+async fn run_download_stream() -> BandwidthStreamSample {
     let download_args = [
         "-s".to_owned(),
         "-o".to_owned(),
@@ -889,66 +1030,73 @@ async fn run_international_measurement() -> BandwidthMeasurement {
         "20".to_owned(),
         CLOUDFLARE_DOWNLOAD_URL.to_owned(),
     ];
-    let download = match run_curl(&download_args, CLOUDFLARE_DOWNLOAD_TIMEOUT).await {
-        Ok(run) => {
-            let parts: Vec<&str> = run.stdout.split_whitespace().collect();
-            let http_code = parts.first().and_then(|value| value.parse::<u16>().ok());
-            let speed = parts.get(1).and_then(|value| parse_u64(value));
-            (
-                bits_per_second(speed),
-                http_code,
-                run.exit.filter(|exit| *exit != 0).map(curl_error_reason),
-            )
-        }
-        Err(reason) => (None, None, Some(reason)),
-    };
+    match run_curl(&download_args, CLOUDFLARE_DOWNLOAD_TIMEOUT).await {
+        Ok(run) => parse_bandwidth_stream(run, 1),
+        Err(reason) => BandwidthStreamSample {
+            bits_per_second: None,
+            http_code: None,
+            error: Some(reason),
+        },
+    }
+}
 
+async fn run_parallel_upload() -> BandwidthStreamSample {
     let upload_path = upload_body_path();
-    let upload = match fs::File::create(&upload_path) {
-        Ok(file) => {
-            let _ = file.set_len(CLOUDFLARE_UPLOAD_BODY_BYTES);
-            let upload_args = [
-                "-s".to_owned(),
-                "-X".to_owned(),
-                "POST".to_owned(),
-                "--data-binary".to_owned(),
-                format!("@{}", upload_path.display()),
-                "-w".to_owned(),
-                "%{http_code} %{speed_upload}".to_owned(),
-                "--max-time".to_owned(),
-                "25".to_owned(),
-                CLOUDFLARE_UPLOAD_URL.to_owned(),
-            ];
-            let result = run_curl(&upload_args, CLOUDFLARE_UPLOAD_TIMEOUT).await;
-            let _ = fs::remove_file(&upload_path);
-            match result {
-                Ok(run) => {
-                    let parts: Vec<&str> = run.stdout.split_whitespace().collect();
-                    let http_code = parts.first().and_then(|value| value.parse::<u16>().ok());
-                    let speed = parts.get(1).and_then(|value| parse_u64(value));
-                    (
-                        bits_per_second(speed),
-                        http_code,
-                        run.exit.filter(|exit| *exit != 0).map(curl_error_reason),
-                    )
-                }
-                Err(reason) => (None, None, Some(reason)),
-            }
-        }
+    let file = match fs::File::create(&upload_path) {
+        Ok(file) => file,
         Err(error) => {
-            let _ = fs::remove_file(&upload_path);
-            (None, None, Some(format!("upload_body_create_failed:{error}")))
+            return BandwidthStreamSample {
+                bits_per_second: None,
+                http_code: None,
+                error: Some(format!("upload_body_create_failed:{error}")),
+            };
         }
     };
+    if let Err(error) = file.set_len(CLOUDFLARE_UPLOAD_BODY_BYTES) {
+        let _ = fs::remove_file(&upload_path);
+        return BandwidthStreamSample {
+            bits_per_second: None,
+            http_code: None,
+            error: Some(format!("upload_body_resize_failed:{error}")),
+        };
+    }
 
-    BandwidthMeasurement {
-        kind: BandwidthKind::International,
-        label: "国际线路".to_owned(),
-        source: "speed.cloudflare.com".to_owned(),
-        download_bits_per_second: download.0,
-        upload_bits_per_second: upload.0,
-        http_code: download.1.or(upload.1),
-        error: download.2.or(upload.2),
+    let mut tasks = Vec::with_capacity(usize::from(CLOUDFLARE_PARALLEL_STREAMS));
+    for _ in 0..CLOUDFLARE_PARALLEL_STREAMS {
+        tasks.push(tokio::spawn(run_upload_stream(upload_path.clone())));
+    }
+    let mut samples = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        samples.push(task.await.unwrap_or(BandwidthStreamSample {
+            bits_per_second: None,
+            http_code: None,
+            error: Some("bandwidth_stream_join_failed".to_owned()),
+        }));
+    }
+    let _ = fs::remove_file(&upload_path);
+    aggregate_bandwidth_streams(samples, CLOUDFLARE_PARALLEL_STREAMS)
+}
+
+async fn run_upload_stream(upload_path: PathBuf) -> BandwidthStreamSample {
+    let upload_args = [
+        "-s".to_owned(),
+        "-X".to_owned(),
+        "POST".to_owned(),
+        "--data-binary".to_owned(),
+        format!("@{}", upload_path.display()),
+        "-w".to_owned(),
+        "%{http_code} %{speed_upload}".to_owned(),
+        "--max-time".to_owned(),
+        "25".to_owned(),
+        CLOUDFLARE_UPLOAD_URL.to_owned(),
+    ];
+    match run_curl(&upload_args, CLOUDFLARE_UPLOAD_TIMEOUT).await {
+        Ok(run) => parse_bandwidth_stream(run, 1),
+        Err(reason) => BandwidthStreamSample {
+            bits_per_second: None,
+            http_code: None,
+            error: Some(reason),
+        },
     }
 }
 
@@ -971,27 +1119,23 @@ async fn run_domestic_measurement(label: &str, url: &str) -> BandwidthMeasuremen
         "12".to_owned(),
         url.to_owned(),
     ];
-    let (bits, http_code, error) = match run_curl(&args, MIRROR_TIMEOUT).await {
-        Ok(run) => {
-            let parts: Vec<&str> = run.stdout.split_whitespace().collect();
-            let http_code = parts.first().and_then(|value| value.parse::<u16>().ok());
-            let speed = parts.get(1).and_then(|value| parse_u64(value));
-            (
-                bits_per_second(speed),
-                http_code,
-                run.exit.filter(|exit| *exit != 0).map(curl_error_reason),
-            )
-        }
-        Err(reason) => (None, None, Some(reason)),
+    let sample = match run_curl(&args, MIRROR_TIMEOUT).await {
+        Ok(run) => parse_bandwidth_stream(run, 1),
+        Err(reason) => BandwidthStreamSample {
+            bits_per_second: None,
+            http_code: None,
+            error: Some(reason),
+        },
     };
     BandwidthMeasurement {
         kind: BandwidthKind::Domestic,
         label: label.to_owned(),
         source: url.to_owned(),
-        download_bits_per_second: bits,
+        parallel_streams: 1,
+        download_bits_per_second: sample.bits_per_second,
         upload_bits_per_second: None,
-        http_code,
-        error,
+        http_code: sample.http_code,
+        error: sample.error,
     }
 }
 
@@ -1025,7 +1169,12 @@ async fn run_ip_purity_stage(tools: &Tools) -> IpPurityResult {
             error,
         };
     }
-    let args = ["-s".to_owned(), "--max-time".to_owned(), "6".to_owned(), IP_API_URL.to_owned()];
+    let args = [
+        "-s".to_owned(),
+        "--max-time".to_owned(),
+        "6".to_owned(),
+        IP_API_URL.to_owned(),
+    ];
     let output = match run_curl(&args, IP_API_TIMEOUT).await {
         Ok(run) => run,
         Err(reason) => {
@@ -1087,24 +1236,34 @@ async fn run_ip_purity_stage(tools: &Tools) -> IpPurityResult {
     let base_error = if status == "success" {
         None
     } else {
-        Some(format!("ip_api_status_failure:{}", if status.is_empty() { "unknown" } else { status }))
+        Some(format!(
+            "ip_api_status_failure:{}",
+            if status.is_empty() { "unknown" } else { status }
+        ))
     };
     // Risk data from the ipok.io public API (7 weighted sources). Runs only
     // when the base lookup produced an address.
-    let (risk_score, ip_type, signals, risk_sources, blocklist_checked, blocklist_listed, risk_error) =
-        if base_error.is_none() && ip.is_some() {
-            run_ipok_risk_query(ip.as_deref().unwrap_or("")).await
-        } else {
-            (
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                None,
-                Vec::new(),
-                Some("ip_api_unavailable".to_owned()),
-            )
-        };
+    let (
+        risk_score,
+        ip_type,
+        signals,
+        risk_sources,
+        blocklist_checked,
+        blocklist_listed,
+        risk_error,
+    ) = if base_error.is_none() && ip.is_some() {
+        run_ipok_risk_query(ip.as_deref().unwrap_or("")).await
+    } else {
+        (
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            Vec::new(),
+            Some("ip_api_unavailable".to_owned()),
+        )
+    };
     IpPurityResult {
         source: "ip-api.com + ipok.io".to_owned(),
         ip,
@@ -1157,7 +1316,17 @@ async fn run_ipok_risk_query(
     ];
     let output = match run_curl(&args, IPOK_TIMEOUT).await {
         Ok(run) => run,
-        Err(reason) => return (None, None, Vec::new(), Vec::new(), None, Vec::new(), Some(reason)),
+        Err(reason) => {
+            return (
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                None,
+                Vec::new(),
+                Some(reason),
+            );
+        }
     };
     let parsed: serde_json::Value = match serde_json::from_str(output.stdout.trim()) {
         Ok(value) => value,
@@ -1192,12 +1361,16 @@ async fn run_ipok_risk_query(
             }
             risk_sources.push(IpRiskSource {
                 source,
-                risk: contributor["risk"].as_u64().map(|value| value.min(100) as u32),
+                risk: contributor["risk"]
+                    .as_u64()
+                    .map(|value| value.min(100) as u32),
                 weight: contributor["weight"].as_f64(),
             });
         }
     }
-    let blocklist_checked = parsed["blocklist"]["checked"].as_u64().map(|value| value as u32);
+    let blocklist_checked = parsed["blocklist"]["checked"]
+        .as_u64()
+        .map(|value| value as u32);
     let mut blocklist_listed = Vec::new();
     if let Some(listed) = parsed["blocklist"]["listed"].as_array() {
         for value in listed.iter().take(IPOK_MAX_BLOCKLIST) {
@@ -1227,7 +1400,10 @@ mod tests {
             split_terse("Rhino-5G:100:36:WPA2 WPA3:5 GHz"),
             vec!["Rhino-5G", "100", "36", "WPA2 WPA3", "5 GHz"]
         );
-        assert_eq!(split_terse(":80:11:WPA1 WPA2:2.4 GHz"), vec!["", "80", "11", "WPA1 WPA2", "2.4 GHz"]);
+        assert_eq!(
+            split_terse(":80:11:WPA1 WPA2:2.4 GHz"),
+            vec!["", "80", "11", "WPA1 WPA2", "2.4 GHz"]
+        );
         assert_eq!(
             split_terse(r"My\:Net:77:6:WPA2:2.4 GHz"),
             vec!["My:Net", "77", "6", "WPA2", "2.4 GHz"]
@@ -1262,6 +1438,134 @@ mod tests {
         assert_eq!(curl_error_reason(28), "curl_exit_28_timeout");
         assert_eq!(curl_error_reason(47), "curl_exit_47_too_many_redirects");
         assert_eq!(curl_error_reason(3), "curl_exit_3");
+    }
+
+    #[test]
+    fn bandwidth_parser_rejects_http_errors_and_keeps_timed_samples() {
+        let not_found = parse_bandwidth_stream(
+            CurlRun {
+                exit: Some(0),
+                stdout: "404 0".to_owned(),
+            },
+            1,
+        );
+        assert_eq!(not_found.http_code, Some(404));
+        assert_eq!(not_found.bits_per_second, None);
+        assert_eq!(not_found.error.as_deref(), Some("http_404"));
+
+        let timed_sample = parse_bandwidth_stream(
+            CurlRun {
+                exit: Some(28),
+                stdout: "200 1250000".to_owned(),
+            },
+            1,
+        );
+        assert_eq!(timed_sample.http_code, Some(200));
+        assert_eq!(timed_sample.bits_per_second, Some(10_000_000));
+        assert_eq!(timed_sample.error, None);
+
+        let empty_success = parse_bandwidth_stream(
+            CurlRun {
+                exit: Some(0),
+                stdout: "200 0".to_owned(),
+            },
+            1,
+        );
+        assert_eq!(empty_success.bits_per_second, None);
+        assert_eq!(empty_success.error.as_deref(), Some("bandwidth_speed_zero"));
+    }
+
+    #[test]
+    fn domestic_mirrors_use_stable_noble_index_objects() {
+        assert_eq!(DOMESTIC_MIRRORS.len(), 4);
+        assert!(DOMESTIC_MIRRORS.iter().all(|(_, url)| {
+            url.ends_with("/ubuntu/dists/noble/Contents-amd64.gz")
+                && !url.contains("ubuntu-releases")
+        }));
+    }
+
+    #[test]
+    fn parallel_bandwidth_samples_are_summed_and_report_partial_runs() {
+        let sample = |bits, error: Option<&str>| BandwidthStreamSample {
+            bits_per_second: bits,
+            http_code: Some(200),
+            error: error.map(str::to_owned),
+        };
+        let complete = aggregate_bandwidth_streams(
+            vec![
+                sample(Some(10), None),
+                sample(Some(20), None),
+                sample(Some(30), None),
+                sample(Some(40), None),
+            ],
+            4,
+        );
+        assert_eq!(complete.bits_per_second, Some(100));
+        assert_eq!(complete.error, None);
+
+        let partial = aggregate_bandwidth_streams(
+            vec![
+                sample(Some(10), None),
+                sample(Some(20), None),
+                sample(None, Some("curl_exit_28_timeout")),
+                sample(Some(40), None),
+            ],
+            4,
+        );
+        assert_eq!(partial.bits_per_second, Some(70));
+        assert_eq!(
+            partial.error.as_deref(),
+            Some("bandwidth_streams_partial_3_of_4")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ip_purity_and_basic_measurements_use_independent_slots_and_cancellation() {
+        let handle = SpeedTestHandle {
+            tools: Tools {
+                curl: None,
+                iperf3: None,
+                nmcli: None,
+                iw: None,
+                linssid: None,
+                pkexec: None,
+            },
+            basic_cancel: Arc::new(AtomicBool::new(false)),
+            purity_cancel: Arc::new(AtomicBool::new(false)),
+            basic_busy: Arc::new(AtomicBool::new(false)),
+            purity_busy: Arc::new(AtomicBool::new(false)),
+            iperf3_busy: Arc::new(AtomicBool::new(false)),
+            iperf3_pid: Arc::new(Mutex::new(None)),
+        };
+        let mut purity_events = handle
+            .start_basic(vec![SpeedTestStage::IpPurity])
+            .expect("IP purity run claims its slot");
+        let mut basic_events = handle
+            .start_basic(vec![SpeedTestStage::Latency, SpeedTestStage::Bandwidth])
+            .expect("basic measurement can run concurrently");
+        let error = handle
+            .start_basic(vec![SpeedTestStage::Latency])
+            .expect_err("a second basic measurement must still be rejected");
+        assert_eq!(error.code, "speedtest_busy");
+        assert_eq!(error.reason, "speedtest_already_running");
+
+        let basic_cancelled = handle.cancel(SpeedTestRunKind::Basic);
+        let purity_cancelled = handle.cancel(SpeedTestRunKind::IpPurity);
+        assert!(basic_cancelled.cancelled);
+        assert!(purity_cancelled.cancelled);
+        assert_eq!(basic_cancelled.run_kind, SpeedTestRunKind::Basic);
+        assert_eq!(purity_cancelled.run_kind, SpeedTestRunKind::IpPurity);
+
+        while let Some(event) = purity_events.recv().await {
+            if matches!(event, SpeedTestStreamEvent::End(_)) {
+                break;
+            }
+        }
+        while let Some(event) = basic_events.recv().await {
+            if matches!(event, SpeedTestStreamEvent::End(_)) {
+                break;
+            }
+        }
     }
 
     #[test]

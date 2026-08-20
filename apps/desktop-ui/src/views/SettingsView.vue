@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Info, RefreshCw, SlidersHorizontal } from 'lucide-vue-next'
+import {
+  ChevronRight,
+  CircleOff,
+  Clock3,
+  Database,
+  Gauge,
+  Info,
+  RefreshCw,
+  SlidersHorizontal,
+  SquareTerminal,
+} from 'lucide-vue-next'
 
 import { getBackendCapabilityReport, getSystemInfo, getUsageSummary } from '../backend'
 import type {
@@ -13,6 +23,7 @@ import type {
 
 type GroupState = 'loading' | 'ready' | 'error'
 type SettingsTab = 'apps' | 'system'
+type AppsSettingsSection = 'system' | 'remote' | 'data' | 'usage' | 'configuration'
 
 interface CapabilityDefinition {
   id: string
@@ -37,7 +48,7 @@ const remoteCapabilities: CapabilityDefinition[] = [
 
 const dataCapabilities: CapabilityDefinition[] = [
   { id: 'transfers.v1', label: '传输队列', detail: '可恢复上传、下载与冲突处理' },
-  { id: 'notes.v1', label: '备忘录', detail: '日记和列表共享的本地实体' },
+  { id: 'notes.v1', label: '日志', detail: '日历和列表共享的本地日志实体' },
 ]
 
 const pendingSettings = [
@@ -99,7 +110,21 @@ const entryLabels: Record<string, string> = {
   locale: '区域',
 }
 
+const appsSections: Array<{
+  id: AppsSettingsSection
+  label: string
+  detail: string
+  description: string
+}> = [
+  { id: 'system', label: '系统状态', detail: 'appd 与采集能力', description: '查看 appd、资源采集、网络与使用时间能力。状态和 reason 直接来自本机后端。' },
+  { id: 'remote', label: '远程连接', detail: 'SSH 与文件协议', description: '查看 SSH、SFTP、FTP / FTPS 与 SMB2/3 的协议能力和诊断边界。' },
+  { id: 'data', label: '数据与队列', detail: '本地持久化服务', description: '查看传输队列、日志以及后端额外声明的本地数据能力。' },
+  { id: 'usage', label: '使用时间口径', detail: '覆盖与计时定义', description: '查看使用时间统计的起点覆盖、桌面事件流和会话可用性。' },
+  { id: 'configuration', label: '配置边界', detail: '当前未开放项', description: '以下配置项尚无后端设置契约，因此保持只读并如实标记为 unsupported。' },
+]
+
 const activeTab = ref<SettingsTab>('apps')
+const activeAppsSection = ref<AppsSettingsSection>('system')
 
 const capabilities = ref<BackendCapability[]>([])
 const catalogError = ref<BridgeError | null>(null)
@@ -155,6 +180,35 @@ const extraCapabilities = computed(() => {
   ].map((definition) => definition.id))
   return capabilities.value.filter((capability) => !defined.has(capability.id))
 })
+
+const activeAppsSectionMeta = computed(() => (
+  appsSections.find((section) => section.id === activeAppsSection.value) ?? appsSections[0]
+))
+
+const activeCapabilityRows = computed(() => {
+  if (activeAppsSection.value === 'system') return systemRows.value
+  if (activeAppsSection.value === 'remote') return remoteRows.value
+  if (activeAppsSection.value === 'data') {
+    return [
+      ...dataRows.value,
+      ...extraCapabilities.value.map((capability) => ({
+        definition: {
+          id: capability.id,
+          label: capability.id,
+          detail: '后端声明的运行能力',
+        },
+        capability,
+      })),
+    ]
+  }
+  return []
+})
+
+const activeSectionUsesCatalog = computed(() => (
+  activeAppsSection.value === 'system'
+  || activeAppsSection.value === 'remote'
+  || activeAppsSection.value === 'data'
+))
 
 const usageAvailability = computed<BackendStatus>(() => {
   if (usageError.value?.kind === 'transport') return 'unreachable'
@@ -307,6 +361,29 @@ function onTabKeydown(event: KeyboardEvent): void {
   document.querySelector<HTMLButtonElement>(`[data-settings-tab="${tabs[next]}"]`)?.focus()
 }
 
+function selectAppsSection(section: AppsSettingsSection): void {
+  activeAppsSection.value = section
+}
+
+function onAppsSectionKeydown(event: KeyboardEvent): void {
+  if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const sections = appsSections.map((section) => section.id)
+  const current = sections.indexOf(activeAppsSection.value)
+  let next: number
+  if (event.key === 'Home') {
+    next = 0
+  } else if (event.key === 'End') {
+    next = sections.length - 1
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+    next = current + 1 >= sections.length ? 0 : current + 1
+  } else {
+    next = current - 1 < 0 ? sections.length - 1 : current - 1
+  }
+  event.preventDefault()
+  selectAppsSection(sections[next])
+  document.querySelector<HTMLButtonElement>(`[data-settings-section="${sections[next]}"]`)?.focus()
+}
+
 onMounted(() => {
   void refreshCatalog()
   void refreshUsage()
@@ -324,35 +401,37 @@ onBeforeUnmount(() => {
   <section class="settings-console" aria-labelledby="settings-heading">
     <h1 id="settings-heading" class="sr-only">设置</h1>
 
-    <div class="settings-tabs" role="tablist" aria-label="设置视图" @keydown="onTabKeydown">
-      <button
-        id="settings-tab-apps"
-        class="settings-tab"
-        :class="{ 'is-active': activeTab === 'apps' }"
-        type="button"
-        role="tab"
-        data-settings-tab="apps"
-        :aria-selected="activeTab === 'apps'"
-        aria-controls="settings-panel-apps"
-        :tabindex="activeTab === 'apps' ? 0 : -1"
-        @click="selectTab('apps')"
-      >
-        <SlidersHorizontal :size="18" aria-hidden="true" /><span>应用设置</span>
-      </button>
-      <button
-        id="settings-tab-system"
-        class="settings-tab"
-        :class="{ 'is-active': activeTab === 'system' }"
-        type="button"
-        role="tab"
-        data-settings-tab="system"
-        :aria-selected="activeTab === 'system'"
-        aria-controls="settings-panel-system"
-        :tabindex="activeTab === 'system' ? 0 : -1"
-        @click="selectTab('system')"
-      >
-        <Info :size="18" aria-hidden="true" /><span>系统信息</span>
-      </button>
+    <div class="settings-toolbar">
+      <div class="settings-tabs" role="tablist" aria-label="设置视图" @keydown="onTabKeydown">
+        <button
+          id="settings-tab-apps"
+          class="settings-tab"
+          :class="{ 'is-active': activeTab === 'apps' }"
+          type="button"
+          role="tab"
+          data-settings-tab="apps"
+          :aria-selected="activeTab === 'apps'"
+          aria-controls="settings-panel-apps"
+          :tabindex="activeTab === 'apps' ? 0 : -1"
+          @click="selectTab('apps')"
+        >
+          <SlidersHorizontal :size="18" aria-hidden="true" /><span>应用设置</span>
+        </button>
+        <button
+          id="settings-tab-system"
+          class="settings-tab"
+          :class="{ 'is-active': activeTab === 'system' }"
+          type="button"
+          role="tab"
+          data-settings-tab="system"
+          :aria-selected="activeTab === 'system'"
+          aria-controls="settings-panel-system"
+          :tabindex="activeTab === 'system' ? 0 : -1"
+          @click="selectTab('system')"
+        >
+          <Info :size="18" aria-hidden="true" /><span>系统信息</span>
+        </button>
+      </div>
       <button
         class="icon-button settings-refresh"
         type="button"
@@ -369,160 +448,200 @@ onBeforeUnmount(() => {
       <div
         v-if="activeTab === 'apps'"
         id="settings-panel-apps"
-        class="settings-panel"
+        class="settings-panel settings-app-layout"
         role="tabpanel"
         aria-labelledby="settings-tab-apps"
       >
-        <p class="settings-desc">
-          查看本机控制台的运行事实与配置边界。当前版本提供状态查看；配置项接口尚未开放，未提供项如实标记。
-        </p>
+        <aside class="settings-index" aria-label="应用设置分区">
+          <span class="settings-index-kicker">Settings index</span>
+          <h2>应用设置</h2>
+          <p>运行事实、统计口径与当前版本的配置边界。</p>
 
-        <div v-if="groupState === 'error'" class="settings-error" role="status">
-          <strong>设置事实不可用</strong>
-          <code>{{ catalogError?.reason }}</code>
-          <button class="settings-retry" type="button" @click="refresh">
-            <RefreshCw :size="14" aria-hidden="true" />
-            <span>重试</span>
-          </button>
-        </div>
+          <div
+            class="settings-section-tabs"
+            role="tablist"
+            aria-label="应用设置分区"
+            aria-orientation="vertical"
+            @keydown="onAppsSectionKeydown"
+          >
+            <button
+              v-for="(section, index) in appsSections"
+              :id="`settings-section-tab-${section.id}`"
+              :key="section.id"
+              class="settings-section-tab"
+              :class="{ 'is-active': activeAppsSection === section.id }"
+              type="button"
+              role="tab"
+              :data-settings-section="section.id"
+              :aria-selected="activeAppsSection === section.id"
+              aria-controls="settings-apps-section-panel"
+              :tabindex="activeAppsSection === section.id ? 0 : -1"
+              @click="selectAppsSection(section.id)"
+            >
+              <Gauge v-if="section.id === 'system'" :size="18" aria-hidden="true" />
+              <SquareTerminal v-else-if="section.id === 'remote'" :size="18" aria-hidden="true" />
+              <Database v-else-if="section.id === 'data'" :size="18" aria-hidden="true" />
+              <Clock3 v-else-if="section.id === 'usage'" :size="18" aria-hidden="true" />
+              <CircleOff v-else :size="18" aria-hidden="true" />
+              <span class="settings-section-tab-copy">
+                <strong>{{ section.label }}</strong>
+                <small>{{ section.detail }}</small>
+              </span>
+              <span class="settings-section-index" aria-hidden="true">0{{ index + 1 }}</span>
+              <ChevronRight :size="16" class="settings-section-chevron" aria-hidden="true" />
+            </button>
+          </div>
 
-        <div v-else-if="catalogError && groupState === 'ready'" class="settings-error is-stale" role="status">
-          <strong>能力目录刷新失败，正在显示上一次成功数据</strong>
-          <code>{{ catalogError.reason }}</code>
-          <button class="settings-retry" type="button" @click="refresh">
-            <RefreshCw :size="14" aria-hidden="true" />
-            <span>重试</span>
-          </button>
-        </div>
+          <div class="settings-index-note">
+            <strong>只读事实</strong>
+            <span>设置契约未开放前，本页不提供伪交互控件。</span>
+          </div>
+        </aside>
 
-        <section v-else class="settings-group" aria-label="系统状态">
-          <div class="settings-group-title">
-            <strong>系统状态</strong>
-            <span>appd 与采集能力</span>
-          </div>
-          <div v-if="groupState === 'loading'" class="settings-loading" role="status">
-            <RefreshCw :size="15" class="is-spinning" aria-hidden="true" />
-            <span>正在读取后端能力</span>
-          </div>
-          <div v-else class="settings-rows">
-            <div v-for="row in systemRows" :key="row.definition.id" class="settings-row">
-              <span class="settings-row-name">{{ row.definition.label }}<small>{{ row.definition.detail }}</small></span>
-              <span class="settings-token" :class="`is-${row.capability.status}`">{{ row.capability.status }}</span>
-              <code class="settings-row-reason" :title="row.capability.reason">{{ row.capability.reason }}</code>
+        <section
+          id="settings-apps-section-panel"
+          class="settings-fact-workspace"
+          role="tabpanel"
+          :aria-labelledby="`settings-section-tab-${activeAppsSection}`"
+        >
+          <header class="settings-section-heading">
+            <div>
+              <span class="settings-section-kicker">Settings facts</span>
+              <h2>{{ activeAppsSectionMeta.label }}</h2>
+              <p>{{ activeAppsSectionMeta.description }}</p>
             </div>
-          </div>
-        </section>
-
-        <section v-if="groupState === 'ready'" class="settings-group" aria-label="远程连接">
-          <div class="settings-group-title">
-            <strong>远程连接</strong>
-            <span>SSH 终端与文件能力</span>
-          </div>
-          <div class="settings-rows">
-            <div v-for="row in remoteRows" :key="row.definition.id" class="settings-row">
-              <span class="settings-row-name">{{ row.definition.label }}<small>{{ row.definition.detail }}</small></span>
-              <span class="settings-token" :class="`is-${row.capability.status}`">{{ row.capability.status }}</span>
-              <code class="settings-row-reason" :title="row.capability.reason">{{ row.capability.reason }}</code>
-            </div>
-          </div>
-        </section>
-
-        <section v-if="groupState === 'ready'" class="settings-group" aria-label="数据与队列">
-          <div class="settings-group-title">
-            <strong>数据与队列</strong>
-            <span>本地持久化服务</span>
-          </div>
-          <div class="settings-rows">
-            <div v-for="row in dataRows" :key="row.definition.id" class="settings-row">
-              <span class="settings-row-name">{{ row.definition.label }}<small>{{ row.definition.detail }}</small></span>
-              <span class="settings-token" :class="`is-${row.capability.status}`">{{ row.capability.status }}</span>
-              <code class="settings-row-reason" :title="row.capability.reason">{{ row.capability.reason }}</code>
-            </div>
-          </div>
-          <div v-if="extraCapabilities.length > 0" class="settings-group-inner" aria-label="其他能力">
-            <div v-for="capability in extraCapabilities" :key="capability.id" class="settings-row">
-              <span class="settings-row-name">{{ capability.id }}<small>后端声明的运行能力</small></span>
-              <span class="settings-token" :class="`is-${capability.status}`">{{ capability.status }}</span>
-              <code class="settings-row-reason" :title="capability.reason">{{ capability.reason }}</code>
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-group" aria-label="使用时间口径">
-          <div class="settings-group-title">
-            <strong>使用时间口径</strong>
-            <span>统计事实</span>
-          </div>
-          <dl class="settings-facts">
-            <div class="settings-fact">
-              <dt>统计始于</dt>
-              <dd>{{ trackingStartedLabel }}</dd>
-            </div>
-            <div class="settings-fact">
-              <dt>当日覆盖</dt>
-              <dd>
-                <span class="settings-token" :class="`is-${coverageStatus}`">{{ coverageStatus }}</span>
-                <code :title="usageReason">{{ usageReason }}</code>
-              </dd>
-            </div>
-            <div class="settings-fact">
-              <dt>周期起点覆盖</dt>
-              <dd>{{ formatBucketCoverage(usageSummary?.coverage.bucketStartCovered) }}</dd>
-            </div>
-            <div class="settings-fact">
-              <dt>niri 事件流</dt>
-              <dd>
-                <span class="settings-token" :class="usageSummary?.coverage.niriEventStreamConnected ? 'is-healthy' : 'is-degraded'">
-                  {{ usageSummary?.coverage.niriEventStreamConnected ? 'connected' : 'disconnected' }}
-                </span>
-              </dd>
-            </div>
-            <div class="settings-fact">
-              <dt>logind 会话</dt>
-              <dd>
-                <span class="settings-token" :class="usageSummary?.coverage.logindSessionAvailable ? 'is-healthy' : 'is-degraded'">
-                  {{ usageSummary?.coverage.logindSessionAvailable ? 'available' : 'unavailable' }}
-                </span>
-              </dd>
-            </div>
-            <div class="settings-fact settings-fact-wide">
-              <dt>计时口径</dt>
-              <dd>{{ formatUsageDefinition(usageSummary?.coverage.definition) }}</dd>
-            </div>
-            <div v-if="usageError" class="settings-fact settings-fact-wide">
-              <dt>使用时间</dt>
-              <dd>
-                <span class="settings-token" :class="`is-${usageAvailability}`">{{ usageAvailability }}</span>
-                <code :title="usageReason">{{ usageReason }}</code>
-              </dd>
-            </div>
-          </dl>
-        </section>
-
-        <section class="settings-group" aria-label="配置项">
-          <div class="settings-group-title">
-            <strong>配置项</strong>
-            <span>当前版本未提供配置界面</span>
-          </div>
-          <div class="settings-rows">
-            <div v-for="item in pendingSettings" :key="item.label" class="settings-row">
-              <span class="settings-row-name">{{ item.label }}<small>{{ item.detail }}</small></span>
+            <div v-if="activeSectionUsesCatalog" class="settings-status-legend" aria-label="能力状态图例">
+              <span class="settings-token is-healthy">healthy</span>
+              <span class="settings-token is-degraded">degraded</span>
               <span class="settings-token is-unsupported">unsupported</span>
-              <code class="settings-row-reason">not_implemented</code>
             </div>
-          </div>
-        </section>
+          </header>
 
-        <div class="settings-note">
-          <strong>说明</strong>
-          <span>本页所有状态与 reason 均来自后端实时事实。可配置项（采集、保留期、通知、快捷键、隐私、远程默认值）将在后端提供设置契约后分批开放，届时本页对应行转为可操作控件。</span>
-        </div>
+          <template v-if="activeSectionUsesCatalog">
+            <div v-if="groupState === 'error'" class="settings-error" role="status">
+              <strong>设置事实不可用</strong>
+              <code>{{ catalogError?.reason }}</code>
+              <button class="settings-retry" type="button" @click="refresh">
+                <RefreshCw :size="14" aria-hidden="true" />
+                <span>重试</span>
+              </button>
+            </div>
+
+            <template v-else>
+              <div v-if="catalogError && groupState === 'ready'" class="settings-error is-stale" role="status">
+                <strong>能力目录刷新失败，正在显示上一次成功数据</strong>
+                <code>{{ catalogError.reason }}</code>
+                <button class="settings-retry" type="button" @click="refresh">
+                  <RefreshCw :size="14" aria-hidden="true" />
+                  <span>重试</span>
+                </button>
+              </div>
+
+              <div v-if="groupState === 'loading'" class="settings-loading" role="status">
+                <RefreshCw :size="15" class="is-spinning" aria-hidden="true" />
+                <span>正在读取后端能力</span>
+              </div>
+
+              <div v-else class="settings-rows" role="table" :aria-label="`${activeAppsSectionMeta.label}能力状态`">
+                <div class="settings-table-head" role="row">
+                  <span role="columnheader">能力</span>
+                  <span role="columnheader">状态</span>
+                  <span role="columnheader">Capability reason</span>
+                </div>
+                <div v-for="row in activeCapabilityRows" :key="row.definition.id" class="settings-row" role="row">
+                  <span class="settings-row-name" role="cell">{{ row.definition.label }}<small>{{ row.definition.detail }}</small></span>
+                  <span class="settings-token" :class="`is-${row.capability.status}`" role="cell">{{ row.capability.status }}</span>
+                  <code class="settings-row-reason" :title="row.capability.reason" role="cell">{{ row.capability.reason }}</code>
+                </div>
+              </div>
+            </template>
+
+            <div class="settings-note">
+              <Info :size="18" aria-hidden="true" />
+              <span><strong>状态说明</strong>degraded 表示部分事实可用；进入对应功能页可查看完整 reason 与恢复路径。</span>
+            </div>
+          </template>
+
+          <template v-else-if="activeAppsSection === 'usage'">
+            <div v-if="usageLoading && !usageSummary" class="settings-loading" role="status">
+              <RefreshCw :size="15" class="is-spinning" aria-hidden="true" />
+              <span>正在读取使用时间口径</span>
+            </div>
+            <dl v-else class="settings-facts">
+              <div class="settings-fact">
+                <dt>统计始于</dt>
+                <dd>{{ trackingStartedLabel }}</dd>
+              </div>
+              <div class="settings-fact">
+                <dt>当日覆盖</dt>
+                <dd>
+                  <span class="settings-token" :class="`is-${coverageStatus}`">{{ coverageStatus }}</span>
+                  <code :title="usageReason">{{ usageReason }}</code>
+                </dd>
+              </div>
+              <div class="settings-fact">
+                <dt>周期起点覆盖</dt>
+                <dd>{{ formatBucketCoverage(usageSummary?.coverage.bucketStartCovered) }}</dd>
+              </div>
+              <div class="settings-fact">
+                <dt>niri 事件流</dt>
+                <dd>
+                  <span class="settings-token" :class="usageSummary?.coverage.niriEventStreamConnected ? 'is-healthy' : 'is-degraded'">
+                    {{ usageSummary?.coverage.niriEventStreamConnected ? 'connected' : 'disconnected' }}
+                  </span>
+                </dd>
+              </div>
+              <div class="settings-fact">
+                <dt>logind 会话</dt>
+                <dd>
+                  <span class="settings-token" :class="usageSummary?.coverage.logindSessionAvailable ? 'is-healthy' : 'is-degraded'">
+                    {{ usageSummary?.coverage.logindSessionAvailable ? 'available' : 'unavailable' }}
+                  </span>
+                </dd>
+              </div>
+              <div class="settings-fact settings-fact-wide">
+                <dt>计时口径</dt>
+                <dd>{{ formatUsageDefinition(usageSummary?.coverage.definition) }}</dd>
+              </div>
+              <div v-if="usageError" class="settings-fact settings-fact-wide">
+                <dt>使用时间</dt>
+                <dd>
+                  <span class="settings-token" :class="`is-${usageAvailability}`">{{ usageAvailability }}</span>
+                  <code :title="usageReason">{{ usageReason }}</code>
+                </dd>
+              </div>
+            </dl>
+            <div class="settings-note">
+              <Info :size="18" aria-hidden="true" />
+              <span><strong>统计边界</strong>使用时间只记录后端声明的前台、解锁与输入活跃条件，不补算统计开始前的数据。</span>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="settings-rows" role="table" aria-label="未开放配置项">
+              <div class="settings-table-head" role="row">
+                <span role="columnheader">配置项</span>
+                <span role="columnheader">状态</span>
+                <span role="columnheader">Capability reason</span>
+              </div>
+              <div v-for="item in pendingSettings" :key="item.label" class="settings-row" role="row">
+                <span class="settings-row-name" role="cell">{{ item.label }}<small>{{ item.detail }}</small></span>
+                <span class="settings-token is-unsupported" role="cell">unsupported</span>
+                <code class="settings-row-reason" role="cell">not_implemented</code>
+              </div>
+            </div>
+            <div class="settings-note">
+              <Info :size="18" aria-hidden="true" />
+              <span><strong>配置说明</strong>后端提供设置契约后，对应项目才会转为可操作控件；当前不新增权限或本地旁路配置。</span>
+            </div>
+          </template>
+        </section>
       </div>
 
       <div
         v-if="activeTab === 'system'"
         id="settings-panel-system"
-        class="settings-panel"
+        class="settings-panel settings-system-workspace"
         role="tabpanel"
         aria-labelledby="settings-tab-system"
       >

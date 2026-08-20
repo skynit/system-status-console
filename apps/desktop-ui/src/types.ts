@@ -599,6 +599,133 @@ export type NoteExportResult =
   | { kind: 'export'; export: NoteExport }
   | { kind: 'error'; error: BridgeError }
 
+export interface JournalFetchInput {
+  localDate: string
+  timezone: string
+  windowStartMs: number
+  windowEndMs: number
+}
+
+export interface JournalSourceCoverage {
+  source: string
+  state: BackendStatus
+  reason: string
+  scannedSessions: number | null
+  includedSessions: number | null
+  ignoredShortSessions: number | null
+}
+
+export interface JournalTokenSourceUsage {
+  source: string
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  reportedTotalTokens: number
+}
+
+export interface JournalTokenUsage {
+  state: BackendStatus
+  reason: string
+  windowStartMs: number
+  windowEndMs: number
+  lastSyncedAtMs: number | null
+  inputTokens: number | null
+  outputTokens: number | null
+  cacheReadTokens: number | null
+  cacheCreationTokens: number | null
+  reportedTotalTokens: number | null
+  totalMethod: 'cc_switch_reported' | 'input_plus_output' | 'input_plus_output_plus_cache' | 'unavailable'
+  bySource: JournalTokenSourceUsage[]
+}
+
+export interface JournalSessionEligibility {
+  state: 'included' | 'ignored_short'
+  reason: string
+  substantiveMessages: number
+  contentChars: number
+  lengthClass: string
+}
+
+export interface JournalSessionOverview {
+  source: string
+  sessionId: string
+  title: string
+  workspace: string | null
+  updatedAtMs: number
+  eligibility: JournalSessionEligibility
+  messageCount: number
+}
+
+export interface JournalCollection {
+  schemaVersion: 1
+  localDate: string
+  timezone: string
+  sourceCoverage: JournalSourceCoverage[]
+  tokenUsage: JournalTokenUsage
+  sessions: JournalSessionOverview[]
+  warnings: string[]
+}
+
+export type JournalCollectionFetchResult =
+  | { kind: 'collection'; collection: JournalCollection }
+  | { kind: 'error'; error: BridgeError }
+
+export type JournalWorkState = 'completed' | 'in_progress' | 'blocked' | 'decision'
+
+export interface JournalWorkItem {
+  workstream: string
+  state: JournalWorkState
+  summary: string
+  evidence: string[]
+  sourceSessionIds: string[]
+}
+
+export interface JournalKnowledgeItem {
+  topic: string
+  summary: string
+  sourceSessionIds: string[]
+}
+
+export interface JournalKnowledgeCandidate {
+  sourceSessionId: string
+  recommended: boolean
+  reason: string
+  recommendedSkill: 'capture-conversations-to-vault'
+}
+
+export interface JournalSummary {
+  schemaVersion: 1
+  localDate: string
+  timezone: string
+  title: string
+  markdownBody: string
+  workItems: JournalWorkItem[]
+  knowledgeItems: JournalKnowledgeItem[]
+  knowledgeCandidates: JournalKnowledgeCandidate[]
+  remainingItems: string[]
+  sourceCoverage: JournalSourceCoverage[]
+  tokenUsage: JournalTokenUsage
+  warnings: string[]
+}
+
+export type JournalSummaryFetchResult =
+  | { kind: 'summary'; summary: JournalSummary }
+  | { kind: 'error'; error: BridgeError }
+
+export interface JournalKnowledgeCaptureResult {
+  schemaVersion: 1
+  sessionId: string
+  state: 'stored' | 'not_stored'
+  notePaths: string[]
+  warnings: string[]
+}
+
+export type JournalKnowledgeCaptureFetchResult =
+  | { kind: 'capture'; result: JournalKnowledgeCaptureResult }
+  | { kind: 'error'; error: BridgeError }
+
 export const transferStateKinds = [
   'queued',
   'running',
@@ -840,6 +967,7 @@ export interface BandwidthMeasurement {
   kind: BandwidthKind
   label: string
   source: string
+  parallelStreams: number
   downloadBitsPerSecond: number | null
   uploadBitsPerSecond: number | null
   httpCode: number | null
@@ -951,9 +1079,12 @@ export type SpeedTestDeepOutput =
   | { type: 'linssid'; payload: LinssidLaunchResult }
 
 export interface SpeedTestCancelResult {
+  runKind: SpeedTestRunKind
   cancelled: boolean
   reason: string
 }
+
+export type SpeedTestRunKind = 'basic' | 'ip_purity'
 
 export type SpeedTestBasicFetchResult =
   | { kind: 'end'; end: SpeedTestBasicEnd }

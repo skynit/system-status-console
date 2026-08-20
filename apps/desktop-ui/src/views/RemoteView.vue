@@ -3,7 +3,7 @@ import { computed, markRaw, nextTick, onActivated, onBeforeUnmount, onMounted, r
 import { onBeforeRouteLeave } from 'vue-router'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
-import type { IDisposable } from '@xterm/xterm'
+import type { IDisposable, ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import {
   CheckCircle2,
@@ -120,6 +120,29 @@ const tabs: Array<{ protocol: RemoteTabProtocol; label: string; icon: typeof Squ
 const footerProtocols = ['sftp', 'ftp', 'ftps_explicit', 'smb'] as const
 const TERMINAL_INPUT_FLUSH_MS = 4
 const TERMINAL_SCROLLBACK_LINES = 5_000
+const TERMINAL_THEME: ITheme = {
+  background: '#0F141A',
+  foreground: '#EEF3F8',
+  cursor: '#A9C7FF',
+  cursorAccent: '#0F141A',
+  selectionBackground: '#2B3947',
+  black: '#171E26',
+  red: '#E27878',
+  green: '#55B98B',
+  yellow: '#D2A354',
+  blue: '#4D8DFF',
+  magenta: '#C792EA',
+  cyan: '#56B6C2',
+  white: '#EEF3F8',
+  brightBlack: '#9AA8B5',
+  brightRed: '#FF9B9B',
+  brightGreen: '#75D7A5',
+  brightYellow: '#E6C175',
+  brightBlue: '#6EA4FF',
+  brightMagenta: '#D7A8FF',
+  brightCyan: '#7DDCE7',
+  brightWhite: '#FFFFFF',
+}
 
 function fileWorkspaceState(): FileWorkspaceState {
   return {
@@ -1263,12 +1286,7 @@ function mountTerminalSurface(runtime: TerminalRuntime): void {
     fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
     fontSize: 13,
     scrollback: TERMINAL_SCROLLBACK_LINES,
-    theme: {
-      background: '#0F141A',
-      foreground: '#EEF3F8',
-      cursor: '#A9C7FF',
-      selectionBackground: '#2B3947',
-    },
+    theme: TERMINAL_THEME,
   }))
   runtime.fitAddon = markRaw(new FitAddon())
   runtime.terminal.loadAddon(runtime.fitAddon)

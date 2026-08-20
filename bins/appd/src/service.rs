@@ -14,9 +14,7 @@ use localdesk_ipc::{
     TransferLocalHandleProvider, TransferLocalHandleProviderFuture, TransferProvider,
     TransferProviderFuture, UsageSummaryProvider, UsageSummaryProviderFuture, serve,
 };
-use localdesk_systeminfo::{
-    SYSTEM_INFO_SCHEMA_VERSION, SystemInfoCollector, SystemInfoStatus,
-};
+use localdesk_systeminfo::{SYSTEM_INFO_SCHEMA_VERSION, SystemInfoCollector, SystemInfoStatus};
 use localdesk_telemetry::TelemetryManagerHandle;
 use std::sync::Arc;
 use tokio::{net::UnixListener, sync::watch};
@@ -55,11 +53,11 @@ pub fn server_config(
             capability_usage.capability_state(),
         );
         let (ssh, sftp, ftp, smb, transfers) = capability_remote.capability_states();
-        let (speedtest, deeptest) = capability_speedtest.capability_states();
+        let (speedtest, ip_purity, deeptest) = capability_speedtest.capability_states();
         runtime
             .with_remote(ssh, sftp, ftp, smb, transfers)
             .with_notes(capability_notes.capability_state())
-            .with_speedtest(speedtest, deeptest)
+            .with_speedtest(speedtest, ip_purity, deeptest)
     });
 
     let snapshot_provider: SnapshotProvider = Arc::new(move || {
@@ -187,18 +185,17 @@ pub fn server_config(
     let speedtest_provider: SpeedTestProvider = Arc::new(move |stages| {
         let handle = speedtest_basic_handle.clone();
         let future: SpeedTestProviderFuture = Box::pin(async move {
-            handle
-                .start_basic(stages)
-                .map_err(|error| SnapshotProviderError::new(error.code, error.reason, error.retryable))
+            handle.start_basic(stages).map_err(|error| {
+                SnapshotProviderError::new(error.code, error.reason, error.retryable)
+            })
         });
         future
     });
     let speedtest_cancel_handle = speedtest_handle.clone();
-    let speedtest_cancel_provider: SpeedTestCancelProvider = Arc::new(move || {
+    let speedtest_cancel_provider: SpeedTestCancelProvider = Arc::new(move |run_kind| {
         let handle = speedtest_cancel_handle.clone();
-        let future: SpeedTestCancelProviderFuture = Box::pin(async move {
-            Ok(handle.cancel())
-        });
+        let future: SpeedTestCancelProviderFuture =
+            Box::pin(async move { Ok(handle.cancel(run_kind)) });
         future
     });
     let speedtest_deep_handle = speedtest_handle.clone();

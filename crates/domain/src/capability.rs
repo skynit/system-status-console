@@ -5,6 +5,7 @@ pub const TELEMETRY_SNAPSHOT_CAPABILITY: &str = "telemetry.snapshot.v1";
 pub const NETWORK_SYSTEM_CAPABILITY: &str = "network.system.v1";
 pub const NETWORK_PER_APP_CAPABILITY: &str = "network.per_app.v1";
 pub const NETWORK_SPEEDTEST_CAPABILITY: &str = "network.speedtest.v1";
+pub const NETWORK_IP_PURITY_CAPABILITY: &str = "network.ip_purity.v1";
 pub const NETWORK_DEEPTEST_CAPABILITY: &str = "network.deeptest.v1";
 pub const USAGE_FOREGROUND_CAPABILITY: &str = "usage.foreground.v1";
 pub const REMOTE_SSH_CAPABILITY: &str = "remote.ssh.v1";
@@ -20,6 +21,7 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     NETWORK_SYSTEM_CAPABILITY,
     NETWORK_PER_APP_CAPABILITY,
     NETWORK_SPEEDTEST_CAPABILITY,
+    NETWORK_IP_PURITY_CAPABILITY,
     NETWORK_DEEPTEST_CAPABILITY,
     USAGE_FOREGROUND_CAPABILITY,
     REMOTE_SSH_CAPABILITY,
@@ -98,6 +100,7 @@ pub struct CapabilityRuntime {
     pub network_system: CapabilityRuntimeState,
     pub network_per_app: CapabilityRuntimeState,
     pub network_speedtest: CapabilityRuntimeState,
+    pub network_ip_purity: CapabilityRuntimeState,
     pub network_deeptest: CapabilityRuntimeState,
     pub usage_foreground: CapabilityRuntimeState,
     pub remote_ssh: CapabilityRuntimeState,
@@ -122,6 +125,7 @@ impl CapabilityRuntime {
             network_system,
             network_per_app,
             network_speedtest: CapabilityRuntimeState::unsupported("speedtest_tools_not_detected"),
+            network_ip_purity: CapabilityRuntimeState::unsupported("ip_purity_tools_not_detected"),
             network_deeptest: CapabilityRuntimeState::unsupported("deeptest_tools_not_detected"),
             usage_foreground,
             remote_ssh: CapabilityRuntimeState::unsupported("appd_remote_adapter_not_wired"),
@@ -136,9 +140,11 @@ impl CapabilityRuntime {
     pub fn with_speedtest(
         mut self,
         network_speedtest: CapabilityRuntimeState,
+        network_ip_purity: CapabilityRuntimeState,
         network_deeptest: CapabilityRuntimeState,
     ) -> Self {
         self.network_speedtest = network_speedtest;
+        self.network_ip_purity = network_ip_purity;
         self.network_deeptest = network_deeptest;
         self
     }
@@ -198,6 +204,12 @@ pub fn capability_catalog(runtime: &CapabilityRuntime) -> Vec<Capability> {
                     *id,
                     runtime.network_speedtest.status,
                     runtime.network_speedtest.reason.clone(),
+                )
+            } else if *id == NETWORK_IP_PURITY_CAPABILITY {
+                Capability::new(
+                    *id,
+                    runtime.network_ip_purity.status,
+                    runtime.network_ip_purity.reason.clone(),
                 )
             } else if *id == NETWORK_DEEPTEST_CAPABILITY {
                 Capability::new(
@@ -292,13 +304,15 @@ mod tests {
         assert_eq!(catalog[3].status, CapabilityAvailability::Unsupported);
         assert_eq!(catalog[4].status, CapabilityAvailability::Unsupported);
         assert_eq!(catalog[4].id, NETWORK_SPEEDTEST_CAPABILITY);
-        assert_eq!(catalog[5].id, NETWORK_DEEPTEST_CAPABILITY);
-        assert_eq!(catalog[5].reason, "deeptest_tools_not_detected");
-        assert_eq!(catalog[6].status, CapabilityAvailability::Degraded);
-        assert_eq!(catalog[7].reason, "ssh_terminal_adapter_available");
-        assert_eq!(catalog[8].reason, "sftp_partial_file_contract");
-        assert_eq!(catalog[9].status, CapabilityAvailability::Healthy);
-        assert_eq!(catalog[10].reason, "smb_file_adapter_diagnostic_only");
-        assert_eq!(catalog[11].reason, "transfer_executor_not_wired");
+        assert_eq!(catalog[5].id, NETWORK_IP_PURITY_CAPABILITY);
+        assert_eq!(catalog[5].reason, "ip_purity_tools_not_detected");
+        assert_eq!(catalog[6].id, NETWORK_DEEPTEST_CAPABILITY);
+        assert_eq!(catalog[6].reason, "deeptest_tools_not_detected");
+        assert_eq!(catalog[7].status, CapabilityAvailability::Degraded);
+        assert_eq!(catalog[8].reason, "ssh_terminal_adapter_available");
+        assert_eq!(catalog[9].reason, "sftp_partial_file_contract");
+        assert_eq!(catalog[10].status, CapabilityAvailability::Healthy);
+        assert_eq!(catalog[11].reason, "smb_file_adapter_diagnostic_only");
+        assert_eq!(catalog[12].reason, "transfer_executor_not_wired");
     }
 }

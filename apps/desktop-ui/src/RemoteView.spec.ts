@@ -1834,6 +1834,17 @@ describe('RemoteView', () => {
     expect(Array.from(xterm.write.mock.calls[0][0] as Uint8Array)).toEqual(Array.from(output))
     expect(mockedReadTerminal).toHaveBeenCalledWith(sessionId, 45_056)
     expect(xterm.options.scrollback).toBe(5_000)
+    expect(xterm.options.theme).toMatchObject({
+      background: '#0F141A',
+      foreground: '#EEF3F8',
+      red: '#E27878',
+      green: '#55B98B',
+      yellow: '#D2A354',
+      blue: '#4D8DFF',
+      magenta: '#C792EA',
+      cyan: '#56B6C2',
+      brightBlack: '#9AA8B5',
+    })
     expect(scrollSpy).toHaveBeenCalledWith({ block: 'start' })
     expect(xterm.focus).toHaveBeenCalled()
 

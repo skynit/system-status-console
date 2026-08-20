@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本机控制台 · 设置优化方向 1</title>
+<style>
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-600.ttf") format("truetype"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "Instrument Sans Condensed"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-sans-condensed-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "Instrument Serif"; src: url("../../apps/desktop-ui/src/assets/fonts/instrument-serif-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Space Mono"; src: url("../../apps/desktop-ui/src/assets/fonts/space-mono-400.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Space Mono"; src: url("../../apps/desktop-ui/src/assets/fonts/space-mono-700.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  :root {
+    --white: #fff;
+    --pale: #f5f5f5;
+    --ink: #1a1b1f;
+    --muted: #5f6268;
+    --rule: rgba(26, 27, 31, .24);
+    --rule-subtle: rgba(26, 27, 31, .12);
+    --blue: #2f23f2;
+    --turquoise: #2ffedd;
+    --lavender: #bb94ff;
+    --success: #007c6a;
+    --warning: #8a6300;
+    --danger: #b3261e;
+    --unsupported: #5f6268;
+  }
+  * { box-sizing: border-box; }
+  html, body { min-width: 320px; min-height: 100%; margin: 0; }
+  body { background: var(--white); color: var(--ink); font-family: "Instrument Sans Condensed", "Noto Sans SC", system-ui, sans-serif; font-size: 16px; line-height: 1.5; letter-spacing: 0; }
+  button { font: inherit; letter-spacing: 0; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .topbar { display: grid; min-height: 96px; grid-template-columns: 220px minmax(0, 1fr) auto; align-items: center; gap: 24px; padding: 0 32px; border-bottom: 1px solid var(--rule); background: rgba(255,255,255,.96); }
+  .brand { display: grid; width: max-content; font: 700 11px/1.12 "Space Mono", monospace; }
+  .primary-nav { display: flex; width: min(100%, 744px); min-width: 0; justify-self: center; overflow: hidden; border: 1px solid var(--rule); border-radius: 22px; background: rgba(156,156,156,.07); }
+  .nav-item { display: grid; min-width: 0; min-height: 48px; flex: 1 1 auto; place-items: center; padding: 0 13px; border-right: 1px solid var(--rule); font-weight: 600; white-space: nowrap; }
+  .nav-item:last-child { border-right: 0; }
+  .nav-item.active { background: var(--lavender); }
+  .bridge { display: flex; min-width: 250px; min-height: 60px; align-items: center; gap: 10px; padding: 6px 14px; border: 1px solid var(--turquoise); border-radius: 20px; background: rgba(156,156,156,.07); }
+  .bridge-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--success); }
+  .bridge-copy { display: grid; min-width: 0; grid-template-columns: auto auto; align-items: baseline; column-gap: 8px; }
+  .bridge-copy span { font-size: 13px; font-weight: 600; }
+  .bridge-copy strong { color: var(--success); font: 700 11px/1.4 "Space Mono", monospace; }
+  .bridge-copy code { grid-column: 1 / -1; overflow: hidden; color: var(--muted); font: 400 10px/1.4 "Space Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+  .route-banner { display: flex; min-height: 170px; align-items: flex-end; gap: 24px; padding: 28px 40px 30px; border-bottom: 1px solid var(--ink); }
+  .route-index { font: 400 96px/.75 "Instrument Serif", Georgia, serif; }
+  .route-title { display: grid; align-content: end; }
+  .route-name { font-size: 56px; font-weight: 700; line-height: .95; }
+  .route-english { margin-top: 8px; color: var(--blue); font: 400 10px/1.4 "Space Mono", monospace; }
+  .settings-console { min-height: calc(100vh - 266px); }
+  .settings-toolbar { display: flex; min-height: 64px; align-items: center; gap: 8px; padding: 10px 28px; border-bottom: 1px solid var(--rule); }
+  .settings-tabs { display: flex; align-items: center; gap: 4px; }
+  .settings-tab { display: flex; min-height: 44px; align-items: center; gap: 8px; padding: 0 16px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); }
+  .settings-tab.active { border-color: var(--ink); background: var(--ink); color: var(--white); }
+  .settings-tab svg, .refresh svg, .scope-link svg { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .refresh { display: grid; width: 44px; height: 44px; margin-left: auto; place-items: center; padding: 0; border: 1px solid var(--rule); border-radius: 8px; background: var(--white); color: var(--ink); }
+  .workspace { display: grid; min-width: 0; grid-template-columns: 264px minmax(0, 1fr); }
+  .scope-nav { min-width: 0; padding: 24px 20px 32px 28px; border-right: 1px solid var(--rule); background: var(--pale); }
+  .scope-kicker { display: block; margin-bottom: 8px; color: var(--blue); font: 700 10px/1.4 "Space Mono", monospace; text-transform: uppercase; }
+  .scope-title { margin: 0; font-size: 24px; line-height: 1.2; }
+  .scope-desc { margin: 8px 0 24px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .scope-list { display: grid; gap: 4px; }
+  .scope-link { display: grid; min-height: 52px; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; }
+  .scope-link.active { border-color: var(--rule); background: var(--white); box-shadow: inset 3px 0 0 var(--blue); }
+  .scope-link strong { display: block; font-size: 14px; font-weight: 600; }
+  .scope-link small { display: block; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .scope-link .arrow { color: var(--muted); font-family: "Space Mono", monospace; font-size: 13px; }
+  .scope-foot { margin: 24px 0 0; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 12px; }
+  .scope-foot strong { display: block; margin-bottom: 4px; color: var(--ink); }
+  .fact-workspace { min-width: 0; padding: 24px 32px 40px; }
+  .section-heading { display: flex; min-width: 0; align-items: flex-end; gap: 20px; justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid var(--ink); }
+  .section-heading-copy { min-width: 0; }
+  .section-heading h2 { margin: 0; font-size: 28px; line-height: 1.2; }
+  .section-heading p { max-width: 660px; margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+  .legend { display: flex; flex: 0 0 auto; align-items: center; gap: 14px; color: var(--muted); font: 400 11px/1.4 "Space Mono", monospace; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend i, .status::before { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: currentColor; content: ""; }
+  .legend .healthy, .status.healthy { color: var(--success); }
+  .legend .degraded, .status.degraded { color: var(--warning); }
+  .legend .unsupported, .status.unsupported { color: var(--unsupported); }
+  .facts { min-width: 0; }
+  .facts-head, .fact-row { display: grid; min-width: 0; grid-template-columns: minmax(220px, .9fr) minmax(112px, .36fr) minmax(260px, 1.15fr); gap: 16px; align-items: center; }
+  .facts-head { min-height: 38px; color: var(--muted); font: 700 10px/1.4 "Space Mono", monospace; text-transform: uppercase; }
+  .fact-row { min-height: 68px; padding: 10px 0; border-top: 1px solid var(--rule-subtle); }
+  .fact-row:first-of-type { border-top-color: var(--rule); }
+  .fact-name { min-width: 0; }
+  .fact-name strong { display: block; font-size: 15px; font-weight: 600; }
+  .fact-name small { display: block; color: var(--muted); font-size: 13px; }
+  .status { display: inline-flex; align-items: center; gap: 7px; justify-self: start; font: 700 12px/1.4 "Space Mono", monospace; white-space: nowrap; }
+  .reason { min-width: 0; overflow-wrap: anywhere; color: var(--muted); font: 400 12px/1.55 "Space Mono", monospace; }
+  .section-note { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 12px; margin-top: 20px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 6px; background: var(--pale); color: var(--muted); font-size: 13px; }
+  .section-note svg { width: 20px; height: 20px; fill: none; stroke: var(--blue); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .section-note strong { display: block; margin-bottom: 2px; color: var(--ink); }
+  @media (max-width: 1120px) {
+    .topbar { min-height: 64px; grid-template-columns: 1fr auto; padding: 0 28px; }
+    .primary-nav { display: none; }
+    .bridge { min-width: 0; min-height: 42px; padding-block: 4px; border: 0; background: transparent; }
+    .route-banner { min-height: 120px; padding: 22px 28px; }
+    .route-index { font-size: 68px; }
+    .route-name { font-size: 36px; }
+    .settings-console { min-height: calc(100vh - 184px); }
+    .settings-toolbar { padding-inline: 16px; }
+    .workspace { grid-template-columns: 208px minmax(0, 1fr); }
+    .scope-nav { padding: 20px 12px 24px 16px; }
+    .scope-title { font-size: 21px; }
+    .scope-desc { margin-bottom: 16px; }
+    .scope-link { grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding-inline: 8px; }
+    .scope-link .arrow { display: none; }
+    .fact-workspace { padding: 20px 16px 32px; }
+    .section-heading { align-items: flex-start; }
+    .section-heading h2 { font-size: 24px; }
+    .legend { display: none; }
+    .facts-head, .fact-row { grid-template-columns: minmax(172px, .9fr) 108px minmax(0, 1.1fr); gap: 12px; }
+    .reason { font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span>ULTRAMARINE</span><span>CONTROL</span><span>FIELD</span><span>+ H</span></div>
+  <nav class="primary-nav" aria-label="应用页面">
+    <span class="nav-item">仪表盘</span><span class="nav-item">应用</span><span class="nav-item">网络</span><span class="nav-item">远程连接</span><span class="nav-item">传输队列</span><span class="nav-item">备忘录</span><span class="nav-item active">设置</span>
+  </nav>
+  <div class="bridge"><span class="bridge-dot"></span><div class="bridge-copy"><span>桌面桥接</span><strong>HEALTHY</strong><code>appd_online</code></div></div>
+</header>
+<header class="route-banner" aria-hidden="true"><span class="route-index">07</span><div class="route-title"><span class="route-name">设置</span><span class="route-english">SETTINGS</span></div></header>
+<main class="settings-console">
+  <h1 class="sr-only">设置</h1>
+  <div class="settings-toolbar">
+    <div class="settings-tabs" role="tablist" aria-label="设置视图">
+      <button class="settings-tab active" role="tab" aria-selected="true"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span>应用设置</span></button>
+      <button class="settings-tab" role="tab" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><span>系统信息</span></button>
+    </div>
+    <button class="refresh" aria-label="刷新设置事实" title="刷新设置事实"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M21 3v5h-5"/></svg></button>
+  </div>
+  <div class="workspace">
+    <aside class="scope-nav" aria-label="应用设置分区">
+      <span class="scope-kicker">Settings index</span>
+      <h2 class="scope-title">应用设置</h2>
+      <p class="scope-desc">运行事实、统计口径与当前版本的配置边界。</p>
+      <div class="scope-list">
+        <button class="scope-link active"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14a8 8 0 1 1 16 0"/><path d="M12 10v4l2 2"/><path d="M4 14v5h16v-5"/></svg><span><strong>系统状态</strong><small>appd 与采集能力</small></span><span class="arrow">01</span></button>
+        <button class="scope-link"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg><span><strong>远程连接</strong><small>SSH 与文件协议</small></span><span class="arrow">02</span></button>
+        <button class="scope-link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20"/><path d="m17 5-5-3-5 3"/><path d="m17 19-5 3-5-3"/><path d="M2 12h20"/></svg><span><strong>数据与队列</strong><small>本地持久化服务</small></span><span class="arrow">03</span></button>
+        <button class="scope-link"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span><strong>使用时间口径</strong><small>覆盖与计时定义</small></span><span class="arrow">04</span></button>
+        <button class="scope-link"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 8.5l7 7"/></svg><span><strong>配置边界</strong><small>当前未开放项</small></span><span class="arrow">05</span></button>
+      </div>
+      <p class="scope-foot"><strong>只读事实</strong>设置契约未开放前，本页不提供伪交互控件。</p>
+    </aside>
+    <section class="fact-workspace" aria-labelledby="system-status-heading">
+      <header class="section-heading">
+        <div class="section-heading-copy"><h2 id="system-status-heading">系统状态</h2><p>查看 appd、资源采集、网络与使用时间能力。状态和 reason 直接来自本机后端。</p></div>
+        <div class="legend" aria-label="状态图例"><span class="healthy"><i></i>healthy</span><span class="degraded"><i></i>degraded</span><span class="unsupported"><i></i>unsupported</span></div>
+      </header>
+      <div class="facts" role="table" aria-label="系统能力状态">
+        <div class="facts-head" role="row"><span role="columnheader">能力</span><span role="columnheader">状态</span><span role="columnheader">Capability reason</span></div>
+        <div class="fact-row" role="row"><span class="fact-name" role="cell"><strong>appd 服务</strong><small>本地同 UID IPC 与运行状态</small></span><span class="status healthy" role="cell">healthy</span><code class="reason" role="cell">appd_online</code></div>
+        <div class="fact-row" role="row"><span class="fact-name" role="cell"><strong>应用资源采集</strong><small>CPU、内存与文件句柄</small></span><span class="status degraded" role="cell">degraded</span><code class="reason" role="cell">telemetry_partial</code></div>
+        <div class="fact-row" role="row"><span class="fact-name" role="cell"><strong>系统网络</strong><small>接口、计数器与实时速率</small></span><span class="status healthy" role="cell">healthy</span><code class="reason" role="cell">rtnetlink_system_counters_available</code></div>
+        <div class="fact-row" role="row"><span class="fact-name" role="cell"><strong>按应用流量</strong><small>各应用收发流量与占比</small></span><span class="status degraded" role="cell">degraded</span><code class="reason" role="cell">telemetry_cgroup_bindings_unavailable</code></div>
+        <div class="fact-row" role="row"><span class="fact-name" role="cell"><strong>使用时间</strong><small>每日与每周前台使用时长</small></span><span class="status degraded" role="cell">degraded</span><code class="reason" role="cell">wayland_idle_event_stream_unavailable</code></div>
+      </div>
+      <div class="section-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><div><strong>状态说明</strong>degraded 表示部分事实可用；进入对应功能页可查看完整 reason 与恢复路径。</div></div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

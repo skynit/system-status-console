@@ -23,7 +23,7 @@ describe('AppShell', () => {
     expect(wrapper.text()).toContain('网络')
     expect(wrapper.text()).toContain('远程连接')
     expect(wrapper.text()).toContain('传输队列')
-    expect(wrapper.text()).toContain('备忘录')
+    expect(wrapper.text()).toContain('日志')
     expect(wrapper.text()).toContain('设置')
     expect(wrapper.text()).toContain('desktop_bridge_unavailable')
     expect(wrapper.text()).toContain('能力目录不可用')
@@ -38,9 +38,9 @@ describe('AppShell', () => {
     expect(wrapper.get('.menu-button').attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('.mobile-nav').exists()).toBe(false)
 
-    await router.push('/memos')
+    await router.push('/journal')
     await flushPromises()
-    expect(wrapper.find('h1').text()).toBe('备忘录')
+    expect(wrapper.find('h1').text()).toBe('日志')
     expect(wrapper.text()).toContain('unsupported')
     expect(wrapper.text()).toContain('desktop_bridge_unavailable')
   })
@@ -84,6 +84,26 @@ describe('AppShell', () => {
     await router.push('/remote')
     await flushPromises()
     expect(wrapper.get('.remote-console').element).toBe(remoteWorkspace)
+  })
+
+  it('keeps the journal workspace instance across a route round trip', async () => {
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/journal')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: { plugins: [router] },
+    })
+    await flushPromises()
+    const journalWorkspace = wrapper.get('.notes-calendar-console').element
+
+    await router.push('/network')
+    await flushPromises()
+    expect(wrapper.find('.notes-calendar-console').exists()).toBe(false)
+
+    await router.push('/journal')
+    await flushPromises()
+    expect(wrapper.get('.notes-calendar-console').element).toBe(journalWorkspace)
   })
 
   it('keeps primary navigation active for a dashboard deep link with query state', async () => {

@@ -444,7 +444,7 @@ fn verify_terminal_marker(
     terminal: &mut localdesk_remote_ssh::SshTerminalSession,
 ) -> Result<(), Box<dyn Error>> {
     terminal.write_input(
-        b"printf '\\154\\157\\143\\141\\154\\144\\145\\163\\153\\055\\164\\145\\162\\155\\151\\156\\141\\154\\055\\154\\151\\166\\145\\055\\157\\153\\n'; exit\n",
+        b"printf '\\154\\157\\143\\141\\154\\144\\145\\163\\153\\055\\164\\145\\162\\155\\151\\156\\141\\154\\055\\154\\151\\166\\145\\055\\157\\153\\nlocaldesk-terminal-type=%s\\n' \"$TERM\"; exit\n",
     )?;
 
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -456,10 +456,13 @@ fn verify_terminal_marker(
             TerminalRead::Pending => thread::sleep(Duration::from_millis(20)),
             TerminalRead::EndOfStream => break,
         }
-        if transcript
+        let has_marker = transcript
             .windows(b"localdesk-terminal-live-ok".len())
-            .any(|window| window == b"localdesk-terminal-live-ok")
-        {
+            .any(|window| window == b"localdesk-terminal-live-ok");
+        let has_terminal_type = transcript
+            .windows(b"localdesk-terminal-type=xterm-256color".len())
+            .any(|window| window == b"localdesk-terminal-type=xterm-256color");
+        if has_marker && has_terminal_type {
             let _ = terminal.close()?;
             return Ok(());
         }

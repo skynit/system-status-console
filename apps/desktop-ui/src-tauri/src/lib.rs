@@ -1,4 +1,6 @@
 mod commands;
+mod journal_ai;
+mod journal_fetch;
 
 use tauri::Manager;
 
@@ -13,8 +15,8 @@ enum InitialRoute {
     RemoteFtp,
     RemoteSmb,
     Transfers,
-    Memos,
-    MemosList,
+    Journal,
+    JournalList,
     Settings,
 }
 
@@ -30,8 +32,8 @@ impl InitialRoute {
             Self::RemoteFtp => "/remote?protocol=ftp",
             Self::RemoteSmb => "/remote?protocol=smb",
             Self::Transfers => "/transfers",
-            Self::Memos => "/memos",
-            Self::MemosList => "/memos?view=list",
+            Self::Journal => "/journal",
+            Self::JournalList => "/journal?view=list",
             Self::Settings => "/settings",
         }
     }
@@ -47,8 +49,8 @@ impl InitialRoute {
             "remote-ftp" => Ok(Self::RemoteFtp),
             "remote-smb" => Ok(Self::RemoteSmb),
             "transfers" => Ok(Self::Transfers),
-            "memos" => Ok(Self::Memos),
-            "memos-list" => Ok(Self::MemosList),
+            "journal" => Ok(Self::Journal),
+            "journal-list" => Ok(Self::JournalList),
             "settings" => Ok(Self::Settings),
             _ => Err(format!("unsupported initial route: {value}")),
         }
@@ -122,6 +124,9 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             commands::speedtest_deep,
             commands::usage_summary,
             commands::system_info,
+            journal_ai::journal_capture_knowledge,
+            journal_ai::journal_collect,
+            journal_ai::journal_fetch,
         ])
         .run(context)
         .expect("error while running localdesk-desktop");
@@ -177,10 +182,10 @@ mod tests {
         );
         assert_eq!(InitialRoute::RemoteSmb.fragment(), "/remote?protocol=smb");
         assert_eq!(
-            initial_route_from_args(args(&["localdesk-desktop", "--route", "memos-list"])),
-            Ok(Some(InitialRoute::MemosList))
+            initial_route_from_args(args(&["localdesk-desktop", "--route", "journal-list"])),
+            Ok(Some(InitialRoute::JournalList))
         );
-        assert_eq!(InitialRoute::MemosList.fragment(), "/memos?view=list");
+        assert_eq!(InitialRoute::JournalList.fragment(), "/journal?view=list");
         assert!(
             initial_route_from_args(args(&["localdesk-desktop", "--route", "unknown"])).is_err()
         );

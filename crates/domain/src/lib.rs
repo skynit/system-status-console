@@ -9,7 +9,7 @@ mod usage;
 pub use capability::{
     APPD_HEALTH_CAPABILITY, Capability, CapabilityAvailability, CapabilityRuntime,
     CapabilityRuntimeState, KNOWN_CAPABILITIES, NETWORK_DEEPTEST_CAPABILITY,
-    NETWORK_PER_APP_CAPABILITY, NETWORK_SPEEDTEST_CAPABILITY, NETWORK_SYSTEM_CAPABILITY,
+    NETWORK_IP_PURITY_CAPABILITY, NETWORK_PER_APP_CAPABILITY, NETWORK_SPEEDTEST_CAPABILITY, NETWORK_SYSTEM_CAPABILITY,
     NOT_IMPLEMENTED_REASON, NOTES_CAPABILITY, REMOTE_FTP_CAPABILITY, REMOTE_SFTP_CAPABILITY,
     REMOTE_SMB_CAPABILITY, REMOTE_SSH_CAPABILITY, TELEMETRY_SNAPSHOT_CAPABILITY,
     TRANSFERS_CAPABILITY, USAGE_FOREGROUND_CAPABILITY, capability_catalog,
@@ -37,7 +37,7 @@ pub use speedtest::{
     SPEEDTEST_SCHEMA_VERSION, BandwidthKind, BandwidthMeasurement, Iperf3Direction, Iperf3Result,
     IpPurityResult, IpRiskSource, LatencyProbe, LatencyTargetResult, LinssidLaunchResult,
     SpeedTestBasicEnd, SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput,
-    SpeedTestStage, SpeedTestStageData, WifiNetwork, WifiScanResult,
+    SpeedTestRunKind, SpeedTestStage, SpeedTestStageData, WifiNetwork, WifiScanResult,
 };
 pub use telemetry::{
     ApplicationSample, GroupingResolution, IssueCount, MetricState, MetricValue, SystemFdSample,
@@ -80,8 +80,9 @@ mod tests {
         assert_eq!(capabilities[3].status, CapabilityAvailability::Unsupported);
         assert_eq!(capabilities[4].id, NETWORK_SPEEDTEST_CAPABILITY);
         assert_eq!(capabilities[4].status, CapabilityAvailability::Unsupported);
-        assert_eq!(capabilities[5].id, NETWORK_DEEPTEST_CAPABILITY);
-        assert_eq!(capabilities[6].status, CapabilityAvailability::Degraded);
+        assert_eq!(capabilities[5].id, NETWORK_IP_PURITY_CAPABILITY);
+        assert_eq!(capabilities[6].id, NETWORK_DEEPTEST_CAPABILITY);
+        assert_eq!(capabilities[7].status, CapabilityAvailability::Degraded);
     }
 
     #[test]

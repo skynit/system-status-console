@@ -115,6 +115,13 @@ async function mountReady(): Promise<ReturnType<typeof mount>> {
   return wrapper
 }
 
+async function selectAppsSection(
+  wrapper: ReturnType<typeof mount>,
+  section: 'system' | 'remote' | 'data' | 'usage' | 'configuration',
+): Promise<void> {
+  await wrapper.find(`[data-settings-section="${section}"]`).trigger('click')
+}
+
 describe('SettingsView', () => {
   beforeEach(() => {
     mockedReport.mockReset()
@@ -122,7 +129,24 @@ describe('SettingsView', () => {
     mockedSystemInfo.mockReset()
   })
 
-  it('groups the backend capability facts by system, remote and data', async () => {
+  it('keeps refresh outside the primary tablist and supports section arrow navigation', async () => {
+    const wrapper = await mountReady()
+    const primaryTablist = wrapper.get('.settings-toolbar > .settings-tabs')
+    const sectionTabs = wrapper.findAll('.settings-section-tab')
+
+    expect(primaryTablist.attributes('role')).toBe('tablist')
+    expect(primaryTablist.find('.settings-refresh').exists()).toBe(false)
+    expect(sectionTabs).toHaveLength(5)
+    const systemSection = wrapper.get('[data-settings-section="system"]')
+    expect(systemSection.attributes('aria-selected')).toBe('true')
+
+    await systemSection.trigger('keydown', { key: 'ArrowDown' })
+
+    expect(wrapper.get('[data-settings-section="remote"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.text()).toContain('SMB2/3')
+  })
+
+  it('groups backend capability facts into system, remote and data sections', async () => {
     const wrapper = await mountReady()
 
     expect(wrapper.text()).toContain('应用设置')
@@ -130,14 +154,19 @@ describe('SettingsView', () => {
     expect(wrapper.text()).toContain('appd 服务')
     expect(wrapper.text()).toContain('应用资源采集')
     expect(wrapper.text()).toContain('按应用流量')
+    expect(wrapper.text()).toContain('unprivileged_bpf_permanently_disabled')
+    expect(wrapper.findAll('.settings-row')).toHaveLength(5)
+
+    await selectAppsSection(wrapper, 'remote')
     expect(wrapper.text()).toContain('SSH')
     expect(wrapper.text()).toContain('SMB2/3')
-    expect(wrapper.text()).toContain('传输队列')
-    expect(wrapper.text()).toContain('备忘录')
-    expect(wrapper.text()).toContain('unprivileged_bpf_permanently_disabled')
     expect(wrapper.text()).toContain('plain_ftp_explicitly_enabled')
-    expect(wrapper.findAll('.settings-row').length).toBeGreaterThanOrEqual(11)
-    expect(wrapper.findAll('.settings-token.is-healthy').length).toBe(10)
+    expect(wrapper.findAll('.settings-row')).toHaveLength(4)
+
+    await selectAppsSection(wrapper, 'data')
+    expect(wrapper.text()).toContain('传输队列')
+    expect(wrapper.text()).toContain('日志')
+    expect(wrapper.findAll('.settings-row')).toHaveLength(2)
   })
 
   it('marks configured-but-unavailable capability rows as unsupported', async () => {
@@ -163,6 +192,7 @@ describe('SettingsView', () => {
 
   it('renders the usage scope facts from the backend summary', async () => {
     const wrapper = await mountReady()
+    await selectAppsSection(wrapper, 'usage')
 
     expect(wrapper.text()).toContain('统计始于')
     expect(wrapper.text()).toContain('2026-08-12')
@@ -175,9 +205,10 @@ describe('SettingsView', () => {
 
   it('shows six not-implemented configuration entries', async () => {
     const wrapper = await mountReady()
+    await selectAppsSection(wrapper, 'configuration')
 
     expect(wrapper.get('#settings-panel-apps').exists()).toBe(true)
-    expect(wrapper.findAll('#settings-panel-apps .settings-group-title')).toHaveLength(5)
+    expect(wrapper.findAll('#settings-panel-apps .settings-row')).toHaveLength(6)
     expect(wrapper.text()).toContain('采集周期')
     expect(wrapper.text()).toContain('数据保留期')
     expect(wrapper.text()).toContain('通知')
@@ -222,6 +253,7 @@ describe('SettingsView', () => {
 
     const wrapper = mount(SettingsView)
     await flushPromises()
+    await selectAppsSection(wrapper, 'usage')
 
     expect(wrapper.text()).toContain('使用时间')
     expect(wrapper.text()).toContain('degraded')
@@ -244,6 +276,7 @@ describe('SettingsView', () => {
 
     const wrapper = mount(SettingsView)
     await flushPromises()
+    await selectAppsSection(wrapper, 'data')
 
     expect(wrapper.text()).toContain('future.feature.v1')
     expect(wrapper.text()).toContain('后端声明的运行能力')

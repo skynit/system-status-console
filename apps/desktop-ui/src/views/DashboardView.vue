@@ -18,7 +18,7 @@ const capabilityDefinitions: Record<string, { label: string; detail: string }> =
   'remote.ftp.v1': { label: 'FTP / FTPS', detail: '进入 FTP；显式 TLS 可在远程连接中切换' },
   'remote.smb.v1': { label: 'SMB2/3', detail: 'SMB 文件能力与诊断边界' },
   'transfers.v1': { label: '传输队列', detail: '可恢复上传、下载与冲突处理' },
-  'notes.v1': { label: '备忘录', detail: '日记和列表共享的本地实体' },
+  'notes.v1': { label: '日志', detail: '日历和列表共享的本地日志实体' },
 }
 
 const capabilityRoutes: Record<string, RouteLocationRaw> = {
@@ -31,7 +31,7 @@ const capabilityRoutes: Record<string, RouteLocationRaw> = {
   'remote.ftp.v1': { path: '/remote', query: { protocol: 'ftp' } },
   'remote.smb.v1': { path: '/remote', query: { protocol: 'smb' } },
   'transfers.v1': { path: '/transfers' },
-  'notes.v1': { path: '/memos' },
+  'notes.v1': { path: '/journal' },
 }
 
 const capabilities = ref<BackendCapability[]>([])

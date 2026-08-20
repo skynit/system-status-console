@@ -3,9 +3,9 @@ use localdesk_domain::{
     MAX_NOTE_EXPORT_DATA_FRAMES, NetworkApplicationTraffic, NetworkCapabilityState,
     NetworkCoverage, NetworkFreshness, NetworkInterfaceSample, NetworkRate, NetworkTrafficTotals,
     NoteExportFormat, NoteMutationResult, NoteQuery, NoteSummary, NotesCommand, SpeedTestBasicEnd,
-    SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestStageData,
-    SystemFdSample, TelemetryFreshness, TelemetryStatus, UsageApplicationDuration, UsageCoverage,
-    UsageSummaryQuery,
+    SpeedTestCancelResult, SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestRunKind,
+    SpeedTestStageData, SystemFdSample, TelemetryFreshness, TelemetryStatus,
+    UsageApplicationDuration, UsageCoverage, UsageSummaryQuery,
 };
 use localdesk_remote_core::{
     RemoteAdapterCatalog, RemoteProfileCommand, RemoteProfileResult, RemoteSessionCommand,
@@ -162,11 +162,11 @@ impl RequestEnvelope {
         }
     }
 
-    pub fn speedtest_cancel() -> Self {
+    pub fn speedtest_cancel(run_kind: SpeedTestRunKind) -> Self {
         Self {
             protocol_version: WIRE_PROTOCOL_VERSION,
             request_id: Uuid::new_v4(),
-            body: RequestBody::SpeedTestCancel(SpeedTestCancelRequest {}),
+            body: RequestBody::SpeedTestCancel(SpeedTestCancelRequest { run_kind }),
         }
     }
 
@@ -226,13 +226,18 @@ impl SpeedTestBasicRequest {
             }
             seen[index] = true;
         }
+        if SpeedTestRunKind::classify(&self.stages).is_none() {
+            return Err("speedtest_stage_groups_mixed");
+        }
         Ok(())
     }
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct SpeedTestCancelRequest {}
+pub struct SpeedTestCancelRequest {
+    pub run_kind: SpeedTestRunKind,
+}
 
 /// Frames pushed by the appd basic-test runner; the server forwards each to the client.
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
@@ -705,5 +710,35 @@ mod tests {
             speedtest_deep_deadline(&SpeedTestDeepCommand::WifiScan),
             Duration::from_secs(30)
         );
+    }
+
+    #[test]
+    fn basic_and_ip_purity_requests_are_separate_concurrency_lanes() {
+        let basic = SpeedTestBasicRequest {
+            stages: vec![
+                localdesk_domain::SpeedTestStage::Latency,
+                localdesk_domain::SpeedTestStage::Bandwidth,
+            ],
+        };
+        let purity = SpeedTestBasicRequest {
+            stages: vec![localdesk_domain::SpeedTestStage::IpPurity],
+        };
+        let mixed = SpeedTestBasicRequest {
+            stages: vec![
+                localdesk_domain::SpeedTestStage::Bandwidth,
+                localdesk_domain::SpeedTestStage::IpPurity,
+            ],
+        };
+        assert_eq!(basic.validate(), Ok(()));
+        assert_eq!(purity.validate(), Ok(()));
+        assert_eq!(mixed.validate(), Err("speedtest_stage_groups_mixed"));
+
+        let request = RequestEnvelope::speedtest_cancel(SpeedTestRunKind::IpPurity);
+        assert!(matches!(
+            request.body,
+            RequestBody::SpeedTestCancel(SpeedTestCancelRequest {
+                run_kind: SpeedTestRunKind::IpPurity,
+            })
+        ));
     }
 }

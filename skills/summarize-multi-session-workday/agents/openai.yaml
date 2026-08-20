@@ -1,0 +1,4 @@
+interface:
+  display_name: "多会话工作总结"
+  short_description: "汇总当日多 AI 会话、工作成果、知识与 Token 覆盖"
+  default_prompt: "Use $summarize-multi-session-workday to produce a sourced daily work summary from the supplied session corpus."

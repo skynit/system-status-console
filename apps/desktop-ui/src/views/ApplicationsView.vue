@@ -567,14 +567,13 @@ onBeforeUnmount(() => {
 
           <div class="usage-table-wrap">
             <table class="usage-table">
-              <thead><tr><th scope="col">应用</th><th scope="col">前台时长</th><th scope="col">已记录占比</th><th scope="col">最后前台</th><th scope="col">状态</th></tr></thead>
+              <thead><tr><th scope="col">应用</th><th scope="col">前台时长</th><th scope="col">已记录占比</th><th scope="col">最后前台</th></tr></thead>
               <tbody v-if="usageApplications.length">
                 <tr v-for="application in usageApplications" :key="`${application.appId}:${application.timezoneId}:${application.utcOffsetSeconds}`">
                   <th scope="row"><code :title="application.appId">{{ application.appId }}</code><small>{{ application.timezoneId }} · UTC{{ application.utcOffsetSeconds >= 0 ? '+' : '' }}{{ application.utcOffsetSeconds / 3600 }}</small></th>
                   <td>{{ formatDuration(application.durationNs) }}</td>
                   <td>{{ formatUsageShare(application) }}</td>
                   <td>{{ formatTimestamp(application.lastWallUtcMs, true) }}</td>
-                  <td><span :class="`is-${usageSummary?.status ?? 'degraded'}`">{{ usageSummary?.status ?? 'unknown' }}</span></td>
                 </tr>
               </tbody>
             </table>

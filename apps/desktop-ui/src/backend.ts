@@ -54,6 +54,22 @@ import {
   type NoteStatus,
   type NoteSummary,
   type NoteWriteInput,
+  type JournalFetchInput,
+  type JournalCollection,
+  type JournalCollectionFetchResult,
+  type JournalKnowledgeCaptureFetchResult,
+  type JournalKnowledgeCaptureResult,
+  type JournalKnowledgeCandidate,
+  type JournalKnowledgeItem,
+  type JournalSourceCoverage,
+  type JournalSessionEligibility,
+  type JournalSessionOverview,
+  type JournalSummary,
+  type JournalSummaryFetchResult,
+  type JournalTokenSourceUsage,
+  type JournalTokenUsage,
+  type JournalWorkItem,
+  type JournalWorkState,
   type OpenedTerminal,
   type TransferCheckpoint,
   type TransferCompletion,
@@ -112,6 +128,7 @@ import {
   type SpeedTestDeepCommand,
   type SpeedTestDeepFetchResult,
   type SpeedTestDeepOutput,
+  type SpeedTestRunKind,
   type SpeedTestStageData,
   type SystemInfoEntry,
   type SystemInfoFetchResult,
@@ -2169,6 +2186,416 @@ export async function exportNotes(query: NoteQuery, format: NoteExportFormat): P
   }
 }
 
+const journalWorkStates = ['completed', 'in_progress', 'blocked', 'decision'] as const
+const journalTotalMethods = ['cc_switch_reported', 'input_plus_output', 'input_plus_output_plus_cache', 'unavailable'] as const
+const MAX_JOURNAL_ITEMS = 256
+
+function journalFetchWire(input: JournalFetchInput): Record<string, unknown> {
+  return {
+    local_date: input.localDate,
+    timezone: input.timezone,
+    window_start_ms: input.windowStartMs,
+    window_end_ms: input.windowEndMs,
+  }
+}
+
+function validJournalFetchInput(input: JournalFetchInput): boolean {
+  const duration = input.windowEndMs - input.windowStartMs
+  return validCalendarDate(input.localDate)
+    && input.timezone.length > 0
+    && input.timezone.length <= 64
+    && ![...input.timezone].some((char) => /\p{Cc}/u.test(char))
+    && isNonNegativeInteger(input.windowStartMs)
+    && isNonNegativeInteger(input.windowEndMs)
+    && duration >= 20 * 60 * 60 * 1000
+    && duration <= 28 * 60 * 60 * 1000
+}
+
+function normalizeJournalSourceCoverage(value: unknown): JournalSourceCoverage | null {
+  if (
+    !isRecord(value)
+    || typeof value.source !== 'string'
+    || value.source.length === 0
+    || !isBackendStatus(value.state)
+    || typeof value.reason !== 'string'
+    || value.reason.length === 0
+  ) return null
+  const scannedSessions = nullableNonNegativeInteger(value.scanned_sessions)
+  const includedSessions = nullableNonNegativeInteger(value.included_sessions)
+  const ignoredShortSessions = nullableNonNegativeInteger(value.ignored_short_sessions)
+  if (scannedSessions === undefined || includedSessions === undefined || ignoredShortSessions === undefined) return null
+  if (
+    scannedSessions !== null
+    && includedSessions !== null
+    && ignoredShortSessions !== null
+    && includedSessions + ignoredShortSessions !== scannedSessions
+  ) return null
+  return {
+    source: value.source,
+    state: value.state,
+    reason: value.reason,
+    scannedSessions,
+    includedSessions,
+    ignoredShortSessions,
+  }
+}
+
+function normalizeJournalTokenSourceUsage(value: unknown): JournalTokenSourceUsage | null {
+  if (
+    !isRecord(value)
+    || typeof value.source !== 'string'
+    || value.source.length === 0
+    || !isNonNegativeInteger(value.request_count)
+    || !isNonNegativeInteger(value.input_tokens)
+    || !isNonNegativeInteger(value.output_tokens)
+    || !isNonNegativeInteger(value.cache_read_tokens)
+    || !isNonNegativeInteger(value.cache_creation_tokens)
+    || !isNonNegativeInteger(value.reported_total_tokens)
+  ) return null
+  return {
+    source: value.source,
+    requestCount: value.request_count,
+    inputTokens: value.input_tokens,
+    outputTokens: value.output_tokens,
+    cacheReadTokens: value.cache_read_tokens,
+    cacheCreationTokens: value.cache_creation_tokens,
+    reportedTotalTokens: value.reported_total_tokens,
+  }
+}
+
+function normalizeJournalTokenUsage(value: unknown): JournalTokenUsage | null {
+  if (
+    !isRecord(value)
+    || !isBackendStatus(value.state)
+    || typeof value.reason !== 'string'
+    || value.reason.length === 0
+    || !isNonNegativeInteger(value.window_start_ms)
+    || !isNonNegativeInteger(value.window_end_ms)
+    || !isEnumValue(journalTotalMethods, value.total_method)
+    || !Array.isArray(value.by_source)
+    || value.by_source.length > 16
+  ) return null
+  const lastSyncedAtMs = nullableNonNegativeInteger(value.last_synced_at_ms)
+  const inputTokens = nullableNonNegativeInteger(value.input_tokens)
+  const outputTokens = nullableNonNegativeInteger(value.output_tokens)
+  const cacheReadTokens = nullableNonNegativeInteger(value.cache_read_tokens)
+  const cacheCreationTokens = nullableNonNegativeInteger(value.cache_creation_tokens)
+  const reportedTotalTokens = nullableNonNegativeInteger(value.reported_total_tokens)
+  const bySource = value.by_source.map(normalizeJournalTokenSourceUsage)
+  if (
+    lastSyncedAtMs === undefined
+    || inputTokens === undefined
+    || outputTokens === undefined
+    || cacheReadTokens === undefined
+    || cacheCreationTokens === undefined
+    || reportedTotalTokens === undefined
+    || !bySource.every((item): item is JournalTokenSourceUsage => item !== null)
+  ) return null
+  return {
+    state: value.state,
+    reason: value.reason,
+    windowStartMs: value.window_start_ms,
+    windowEndMs: value.window_end_ms,
+    lastSyncedAtMs,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    reportedTotalTokens,
+    totalMethod: value.total_method,
+    bySource,
+  }
+}
+
+function normalizeJournalSessionEligibility(value: unknown): JournalSessionEligibility | null {
+  if (
+    !isRecord(value)
+    || !['included', 'ignored_short'].includes(value.state as string)
+    || typeof value.reason !== 'string'
+    || value.reason.length === 0
+    || !isNonNegativeInteger(value.substantive_messages)
+    || !isNonNegativeInteger(value.content_chars)
+    || typeof value.length_class !== 'string'
+    || value.length_class.length === 0
+  ) return null
+  return {
+    state: value.state as JournalSessionEligibility['state'],
+    reason: value.reason,
+    substantiveMessages: value.substantive_messages,
+    contentChars: value.content_chars,
+    lengthClass: value.length_class,
+  }
+}
+
+function normalizeJournalSessionOverview(value: unknown): JournalSessionOverview | null {
+  if (
+    !isRecord(value)
+    || typeof value.source !== 'string'
+    || value.source.length === 0
+    || typeof value.session_id !== 'string'
+    || value.session_id.length === 0
+    || typeof value.title !== 'string'
+    || value.title.length === 0
+    || !isNonNegativeInteger(value.updated_at_ms)
+    || !isNonNegativeInteger(value.message_count)
+  ) return null
+  const workspace = nullableString(value.workspace)
+  const eligibility = normalizeJournalSessionEligibility(value.eligibility)
+  if (workspace === undefined || !eligibility) return null
+  return {
+    source: value.source,
+    sessionId: value.session_id,
+    title: value.title,
+    workspace,
+    updatedAtMs: value.updated_at_ms,
+    eligibility,
+    messageCount: value.message_count,
+  }
+}
+
+function normalizeJournalCollection(value: unknown, input: JournalFetchInput): JournalCollection | null {
+  if (
+    !isRecord(value)
+    || value.schema_version !== 1
+    || value.local_date !== input.localDate
+    || value.timezone !== input.timezone
+    || !Array.isArray(value.source_coverage)
+    || value.source_coverage.length > 16
+    || !Array.isArray(value.sessions)
+    || value.sessions.length > MAX_JOURNAL_ITEMS
+    || !Array.isArray(value.warnings)
+    || value.warnings.length > MAX_JOURNAL_ITEMS
+    || !value.warnings.every((item) => typeof item === 'string' && item.length > 0)
+  ) return null
+  const sourceCoverage = value.source_coverage.map(normalizeJournalSourceCoverage)
+  const tokenUsage = normalizeJournalTokenUsage(value.token_usage)
+  const sessions = value.sessions.map(normalizeJournalSessionOverview)
+  if (
+    !tokenUsage
+    || tokenUsage.windowStartMs !== input.windowStartMs
+    || tokenUsage.windowEndMs !== input.windowEndMs
+    || !sourceCoverage.every((item): item is JournalSourceCoverage => item !== null)
+    || !sessions.every((item): item is JournalSessionOverview => item !== null)
+  ) return null
+  return {
+    schemaVersion: 1,
+    localDate: value.local_date,
+    timezone: value.timezone,
+    sourceCoverage,
+    tokenUsage,
+    sessions,
+    warnings: value.warnings as string[],
+  }
+}
+
+export async function collectJournalUsage(input: JournalFetchInput): Promise<JournalCollectionFetchResult> {
+  if (!validJournalFetchInput(input)) {
+    return { kind: 'error', error: invalidNoteInputError('journal_collect_input_invalid') }
+  }
+  if (!isDesktopBridgeAvailable()) {
+    return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
+  }
+  try {
+    const collection = normalizeJournalCollection(
+      await invoke<unknown>('journal_collect', { request: journalFetchWire(input) }),
+      input,
+    )
+    return collection
+      ? { kind: 'collection', collection }
+      : { kind: 'error', error: invalidNoteResponseError('invalid_journal_collect_response') }
+  } catch (error) {
+    return { kind: 'error', error: normalizeBridgeError(error, 'journal_collect_unreachable') }
+  }
+}
+
+function normalizeJournalWorkItem(value: unknown): JournalWorkItem | null {
+  if (
+    !isRecord(value)
+    || typeof value.workstream !== 'string'
+    || value.workstream.length === 0
+    || !isEnumValue(journalWorkStates, value.state)
+    || typeof value.summary !== 'string'
+    || value.summary.length === 0
+    || !Array.isArray(value.evidence)
+    || value.evidence.length === 0
+    || !value.evidence.every((item) => typeof item === 'string' && item.length > 0)
+    || !Array.isArray(value.source_session_ids)
+    || value.source_session_ids.length === 0
+    || !value.source_session_ids.every((item) => typeof item === 'string' && item.length > 0)
+  ) return null
+  return {
+    workstream: value.workstream,
+    state: value.state as JournalWorkState,
+    summary: value.summary,
+    evidence: value.evidence as string[],
+    sourceSessionIds: value.source_session_ids as string[],
+  }
+}
+
+function normalizeJournalKnowledgeItem(value: unknown): JournalKnowledgeItem | null {
+  if (
+    !isRecord(value)
+    || typeof value.topic !== 'string'
+    || value.topic.length === 0
+    || typeof value.summary !== 'string'
+    || value.summary.length === 0
+    || !Array.isArray(value.source_session_ids)
+    || value.source_session_ids.length === 0
+    || !value.source_session_ids.every((item) => typeof item === 'string' && item.length > 0)
+  ) return null
+  return {
+    topic: value.topic,
+    summary: value.summary,
+    sourceSessionIds: value.source_session_ids as string[],
+  }
+}
+
+function normalizeJournalKnowledgeCandidate(value: unknown): JournalKnowledgeCandidate | null {
+  if (
+    !isRecord(value)
+    || typeof value.source_session_id !== 'string'
+    || value.source_session_id.length === 0
+    || typeof value.recommended !== 'boolean'
+    || typeof value.reason !== 'string'
+    || value.reason.length === 0
+    || value.recommended_skill !== 'capture-conversations-to-vault'
+  ) return null
+  return {
+    sourceSessionId: value.source_session_id,
+    recommended: value.recommended,
+    reason: value.reason,
+    recommendedSkill: value.recommended_skill,
+  }
+}
+
+function normalizeJournalSummary(value: unknown, input: JournalFetchInput): JournalSummary | null {
+  if (
+    !isRecord(value)
+    || value.schema_version !== 1
+    || value.local_date !== input.localDate
+    || value.timezone !== input.timezone
+    || typeof value.title !== 'string'
+    || value.title.length === 0
+    || typeof value.markdown_body !== 'string'
+    || value.markdown_body.length === 0
+    || !Array.isArray(value.work_items)
+    || !Array.isArray(value.knowledge_items)
+    || !Array.isArray(value.knowledge_candidates)
+    || !Array.isArray(value.remaining_items)
+    || !Array.isArray(value.source_coverage)
+    || !Array.isArray(value.warnings)
+    || value.work_items.length > MAX_JOURNAL_ITEMS
+    || value.knowledge_items.length > MAX_JOURNAL_ITEMS
+    || value.knowledge_candidates.length > MAX_JOURNAL_ITEMS
+    || value.remaining_items.length > MAX_JOURNAL_ITEMS
+    || value.source_coverage.length > 16
+    || value.warnings.length > MAX_JOURNAL_ITEMS
+    || !value.remaining_items.every((item) => typeof item === 'string' && item.length > 0)
+    || !value.warnings.every((item) => typeof item === 'string' && item.length > 0)
+  ) return null
+  const workItems = value.work_items.map(normalizeJournalWorkItem)
+  const knowledgeItems = value.knowledge_items.map(normalizeJournalKnowledgeItem)
+  const knowledgeCandidates = value.knowledge_candidates.map(normalizeJournalKnowledgeCandidate)
+  const sourceCoverage = value.source_coverage.map(normalizeJournalSourceCoverage)
+  const tokenUsage = normalizeJournalTokenUsage(value.token_usage)
+  if (
+    !tokenUsage
+    || tokenUsage.windowStartMs !== input.windowStartMs
+    || tokenUsage.windowEndMs !== input.windowEndMs
+    || !workItems.every((item): item is JournalWorkItem => item !== null)
+    || !knowledgeItems.every((item): item is JournalKnowledgeItem => item !== null)
+    || !knowledgeCandidates.every((item): item is JournalKnowledgeCandidate => item !== null)
+    || !sourceCoverage.every((item): item is JournalSourceCoverage => item !== null)
+  ) return null
+  return {
+    schemaVersion: 1,
+    localDate: value.local_date,
+    timezone: value.timezone,
+    title: value.title,
+    markdownBody: value.markdown_body,
+    workItems,
+    knowledgeItems,
+    knowledgeCandidates,
+    remainingItems: value.remaining_items as string[],
+    sourceCoverage,
+    tokenUsage,
+    warnings: value.warnings as string[],
+  }
+}
+
+export async function fetchJournalSummary(input: JournalFetchInput): Promise<JournalSummaryFetchResult> {
+  if (!validJournalFetchInput(input)) {
+    return { kind: 'error', error: invalidNoteInputError('journal_fetch_input_invalid') }
+  }
+  if (!isDesktopBridgeAvailable()) {
+    return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
+  }
+  try {
+    const summary = normalizeJournalSummary(
+      await invoke<unknown>('journal_fetch', { request: journalFetchWire(input) }),
+      input,
+    )
+    return summary
+      ? { kind: 'summary', summary }
+      : { kind: 'error', error: invalidNoteResponseError('invalid_journal_fetch_response') }
+  } catch (error) {
+    return { kind: 'error', error: normalizeBridgeError(error, 'journal_fetch_unreachable') }
+  }
+}
+
+function normalizeJournalKnowledgeCapture(
+  value: unknown,
+  sessionId: string,
+): JournalKnowledgeCaptureResult | null {
+  if (
+    !isRecord(value)
+    || value.schema_version !== 1
+    || value.session_id !== sessionId
+    || !['stored', 'not_stored'].includes(value.state as string)
+    || !Array.isArray(value.note_paths)
+    || value.note_paths.length > 16
+    || !value.note_paths.every((item) => typeof item === 'string' && item.length > 0)
+    || !Array.isArray(value.warnings)
+    || value.warnings.length > 32
+    || !value.warnings.every((item) => typeof item === 'string' && item.length > 0)
+  ) return null
+  return {
+    schemaVersion: 1,
+    sessionId,
+    state: value.state as 'stored' | 'not_stored',
+    notePaths: value.note_paths as string[],
+    warnings: value.warnings as string[],
+  }
+}
+
+export async function captureJournalKnowledge(
+  input: JournalFetchInput,
+  sessionId: string,
+  confirmed: boolean,
+): Promise<JournalKnowledgeCaptureFetchResult> {
+  if (!validJournalFetchInput(input) || sessionId.length === 0 || sessionId.length > 256 || !confirmed) {
+    return { kind: 'error', error: invalidNoteInputError('journal_knowledge_input_invalid') }
+  }
+  if (!isDesktopBridgeAvailable()) {
+    return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
+  }
+  try {
+    const payload = await invoke<unknown>('journal_capture_knowledge', {
+      request: {
+        fetch: journalFetchWire(input),
+        session_id: sessionId,
+        confirmed,
+      },
+    })
+    const result = normalizeJournalKnowledgeCapture(payload, sessionId)
+    return result
+      ? { kind: 'capture', result }
+      : { kind: 'error', error: invalidNoteResponseError('invalid_journal_knowledge_response') }
+  } catch (error) {
+    return { kind: 'error', error: normalizeBridgeError(error, 'journal_knowledge_unreachable') }
+  }
+}
+
 const MAX_TRANSFER_QUERY_LIMIT = 64
 const MAX_TRANSFER_QUERY_OFFSET = 100_000
 const MAX_TRANSFER_STATE_FILTERS = 10
@@ -2869,10 +3296,14 @@ function normalizeBandwidthMeasurement(value: unknown): BandwidthMeasurement | n
     return null
   }
   if (value.kind !== 'international' && value.kind !== 'domestic') return null
+  if (!Number.isInteger(value.parallel_streams) || Number(value.parallel_streams) < 1 || Number(value.parallel_streams) > 16) {
+    return null
+  }
   return {
     kind: value.kind,
     label: value.label,
     source: value.source,
+    parallelStreams: Number(value.parallel_streams),
     downloadBitsPerSecond: asNullableNumber(value.download_bits_per_second),
     uploadBitsPerSecond: asNullableNumber(value.upload_bits_per_second),
     httpCode: asNullableU16(value.http_code),
@@ -2975,7 +3406,7 @@ export function normalizeSpeedTestStageData(value: unknown): SpeedTestStageData 
 }
 
 export function normalizeSpeedTestBasicEnd(value: unknown): SpeedTestBasicEnd | null {
-  if (!isRecord(value) || value.schema_version !== 1) return null
+  if (!isRecord(value) || value.schema_version !== 2) return null
   if (
     typeof value.started_at_unix_ms !== 'number'
     || typeof value.ended_at_unix_ms !== 'number'
@@ -3074,10 +3505,15 @@ export function normalizeSpeedTestDeepOutput(value: unknown): SpeedTestDeepOutpu
 }
 
 export function normalizeSpeedTestCancelResult(value: unknown): SpeedTestCancelResult | null {
-  if (!isRecord(value) || typeof value.cancelled !== 'boolean' || typeof value.reason !== 'string') {
+  if (
+    !isRecord(value)
+    || (value.run_kind !== 'basic' && value.run_kind !== 'ip_purity')
+    || typeof value.cancelled !== 'boolean'
+    || typeof value.reason !== 'string'
+  ) {
     return null
   }
-  return { cancelled: value.cancelled, reason: value.reason }
+  return { runKind: value.run_kind, cancelled: value.cancelled, reason: value.reason }
 }
 
 export async function runSpeedTestBasic(
@@ -3087,7 +3523,14 @@ export async function runSpeedTestBasic(
   if (!isDesktopBridgeAvailable()) {
     return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
   }
-  if (stages.length === 0 || stages.length > 3 || new Set(stages).size !== stages.length) {
+  const hasBasicStage = stages.some((stage) => stage === 'latency' || stage === 'bandwidth')
+  const hasPurityStage = stages.includes('ip_purity')
+  if (
+    stages.length === 0
+    || stages.length > 3
+    || new Set(stages).size !== stages.length
+    || hasBasicStage === hasPurityStage
+  ) {
     return {
       kind: 'error',
       error: {
@@ -3136,13 +3579,13 @@ export async function runSpeedTestBasic(
   }
 }
 
-export async function cancelSpeedTest(): Promise<SpeedTestCancelFetchResult> {
+export async function cancelSpeedTest(runKind: SpeedTestRunKind): Promise<SpeedTestCancelFetchResult> {
   if (!isDesktopBridgeAvailable()) {
     return { kind: 'error', error: normalizeBridgeError(null, 'desktop_bridge_unavailable') }
   }
   try {
-    const result = normalizeSpeedTestCancelResult(await invoke<unknown>('speedtest_cancel'))
-    return result
+    const result = normalizeSpeedTestCancelResult(await invoke<unknown>('speedtest_cancel', { runKind }))
+    return result?.runKind === runKind
       ? { kind: 'cancelled', result }
       : {
           kind: 'error',

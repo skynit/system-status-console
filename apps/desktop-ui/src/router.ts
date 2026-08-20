@@ -14,7 +14,7 @@ export const routes = [
   { path: '/network', name: 'network', component: NetworkView, meta: { label: '网络' } },
   { path: '/remote', name: 'remote', component: RemoteView, meta: { label: '远程连接' } },
   { path: '/transfers', name: 'transfers', component: TransfersView, meta: { label: '传输队列' } },
-  { path: '/memos', name: 'memos', component: MemosView, meta: { label: '备忘录' } },
+  { path: '/journal', name: 'journal', component: MemosView, meta: { label: '日志' } },
   { path: '/settings', name: 'settings', component: SettingsView, meta: { label: '设置' } },
 ]
 

@@ -337,6 +337,13 @@ describe('ApplicationsView', () => {
     expect(wrapper.text()).toContain('前台时长')
     expect(wrapper.text()).toContain('最后前台')
     expect(wrapper.text()).toContain('已记录占比')
+    expect(wrapper.findAll('.usage-table thead th').map((header) => header.text())).toEqual([
+      '应用',
+      '前台时长',
+      '已记录占比',
+      '最后前台',
+    ])
+    expect(wrapper.findAll('.usage-table tbody tr:first-child td')).toHaveLength(3)
     expect(wrapper.text()).toContain('已覆盖完整周期起点')
     expect(wrapper.text()).toContain('窗口处于前台聚焦、会话已解锁，且最近 5 分钟内有输入')
     expect(wrapper.text()).not.toContain('foreground_unlocked_input_active_300s_monotonic')

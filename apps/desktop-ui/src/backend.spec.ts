@@ -12,8 +12,11 @@ import {
   deleteRemoteProfile,
   deleteRemoteSecret,
   deleteNote,
+  captureJournalKnowledge,
+  collectJournalUsage,
   enqueueTransfer,
   exportNotes,
+  fetchJournalSummary,
   getBackendCapabilityReport,
   getBackendHealth,
   getNote,
@@ -27,6 +30,7 @@ import {
   listTransfers,
   listNotes,
   listRemoteDirectory,
+  normalizeSpeedTestBasicEnd,
   normalizeSpeedTestDeepOutput,
   openRemoteTerminal,
   pickDownloadDestination,
@@ -1257,6 +1261,200 @@ function transferPagePayload(tasks = [transferTaskPayload()]) {
   }
 }
 
+describe('journal fetch bridge', () => {
+  const input = {
+    localDate: '2026-08-20',
+    timezone: 'Asia/Shanghai',
+    windowStartMs: 1_787_155_200_000,
+    windowEndMs: 1_787_241_600_000,
+  }
+
+  function payload() {
+    return {
+      schema_version: 1,
+      local_date: '2026-08-20',
+      timezone: 'Asia/Shanghai',
+      title: '2026-08-20 工作日志',
+      markdown_body: '# 2026-08-20 工作日志',
+      work_items: [{
+        workstream: '本机控制台',
+        state: 'completed',
+        summary: '完成日志功能',
+        evidence: ['package tests passed'],
+        source_session_ids: ['session-1'],
+      }],
+      knowledge_items: [{
+        topic: 'Markdown',
+        summary: '渲染面可以直接编辑',
+        source_session_ids: ['session-1'],
+      }],
+      knowledge_candidates: [{
+        source_session_id: 'session-1',
+        recommended: true,
+        reason: 'long_knowledge_session',
+        recommended_skill: 'capture-conversations-to-vault',
+      }],
+      remaining_items: [],
+      source_coverage: [{
+        source: 'codex',
+        state: 'healthy',
+        reason: 'session_source_ready',
+        scanned_sessions: 2,
+        included_sessions: 1,
+        ignored_short_sessions: 1,
+      }],
+      token_usage: {
+        state: 'healthy',
+        reason: 'cc_switch_usage_ready',
+        window_start_ms: input.windowStartMs,
+        window_end_ms: input.windowEndMs,
+        last_synced_at_ms: 1_787_200_000_000,
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_tokens: 10,
+        cache_creation_tokens: 0,
+        reported_total_tokens: 120,
+        total_method: 'input_plus_output',
+        by_source: [{
+          source: 'codex',
+          request_count: 2,
+          input_tokens: 100,
+          output_tokens: 20,
+          cache_read_tokens: 10,
+          cache_creation_tokens: 0,
+          reported_total_tokens: 120,
+        }],
+      },
+      warnings: [],
+    }
+  }
+
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    delete window.__TAURI_INTERNALS__
+    delete window.__TAURI__
+  })
+
+  it('normalizes a structured summary and preserves the local-day window', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    mockedInvoke.mockResolvedValue(payload())
+
+    await expect(fetchJournalSummary(input)).resolves.toMatchObject({
+      kind: 'summary',
+      summary: {
+        schemaVersion: 1,
+        localDate: '2026-08-20',
+        tokenUsage: { reportedTotalTokens: 120, totalMethod: 'input_plus_output' },
+        sourceCoverage: [{ source: 'codex', includedSessions: 1 }],
+      },
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('journal_fetch', {
+      request: {
+        local_date: '2026-08-20',
+        timezone: 'Asia/Shanghai',
+        window_start_ms: input.windowStartMs,
+        window_end_ms: input.windowEndMs,
+      },
+    })
+  })
+
+  it('collects session and token facts without waiting for AI summarization', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    const summaryPayload = payload()
+    mockedInvoke.mockResolvedValue({
+      schema_version: 1,
+      local_date: summaryPayload.local_date,
+      timezone: summaryPayload.timezone,
+      source_coverage: summaryPayload.source_coverage,
+      token_usage: summaryPayload.token_usage,
+      sessions: [{
+        source: 'codex',
+        session_id: 'session-1',
+        title: '完成日志功能',
+        workspace: '/home/skynit/workspace/sky',
+        updated_at_ms: 1_787_200_000_000,
+        eligibility: {
+          state: 'included',
+          reason: 'substantive_session',
+          substantive_messages: 8,
+          content_chars: 4000,
+          length_class: 'long',
+        },
+        message_count: 12,
+      }],
+      warnings: [],
+    })
+
+    await expect(collectJournalUsage(input)).resolves.toMatchObject({
+      kind: 'collection',
+      collection: {
+        tokenUsage: { reportedTotalTokens: 120 },
+        sessions: [{ sessionId: 'session-1', messageCount: 12 }],
+      },
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('journal_collect', {
+      request: {
+        local_date: '2026-08-20',
+        timezone: 'Asia/Shanghai',
+        window_start_ms: input.windowStartMs,
+        window_end_ms: input.windowEndMs,
+      },
+    })
+  })
+
+  it('rejects malformed summary facts and invalid day windows', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    mockedInvoke.mockResolvedValue({
+      ...payload(),
+      token_usage: { ...payload().token_usage, window_end_ms: input.windowEndMs + 1 },
+    })
+    await expect(fetchJournalSummary(input)).resolves.toMatchObject({
+      kind: 'error',
+      error: { code: 'invalid_journal_fetch_response' },
+    })
+
+    mockedInvoke.mockReset()
+    await expect(fetchJournalSummary({ ...input, windowEndMs: input.windowStartMs + 1_000 })).resolves.toMatchObject({
+      kind: 'error',
+      error: { reason: 'journal_fetch_input_invalid' },
+    })
+    expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+
+  it('keeps knowledge capture behind explicit confirmation', async () => {
+    window.__TAURI_INTERNALS__ = {}
+    await expect(captureJournalKnowledge(input, 'session-1', false)).resolves.toMatchObject({
+      kind: 'error',
+      error: { reason: 'journal_knowledge_input_invalid' },
+    })
+    expect(mockedInvoke).not.toHaveBeenCalled()
+
+    mockedInvoke.mockResolvedValue({
+      schema_version: 1,
+      session_id: 'session-1',
+      state: 'stored',
+      note_paths: ['/home/skynit/Uni/ming/30-知识/Markdown.md'],
+      warnings: [],
+    })
+    await expect(captureJournalKnowledge(input, 'session-1', true)).resolves.toMatchObject({
+      kind: 'capture',
+      result: { state: 'stored', sessionId: 'session-1' },
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('journal_capture_knowledge', {
+      request: {
+        fetch: {
+          local_date: '2026-08-20',
+          timezone: 'Asia/Shanghai',
+          window_start_ms: input.windowStartMs,
+          window_end_ms: input.windowEndMs,
+        },
+        session_id: 'session-1',
+        confirmed: true,
+      },
+    })
+  })
+})
+
 describe('transfers bridge', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
@@ -2220,6 +2418,47 @@ describe('remote frontend contracts', () => {
       type: 'wifi_scan',
       payload: { networks: [{ signalDbm: null, signalBars: '▂▄__' }] },
     })
+  })
+
+  it('normalizes the v2 multi-stream bandwidth contract and rejects invalid stream counts', () => {
+    const payload = {
+      schema_version: 2,
+      started_at_unix_ms: 1_000,
+      ended_at_unix_ms: 2_000,
+      stages: [{
+        stage: 'bandwidth',
+        payload: {
+          measurements: [{
+            kind: 'international',
+            label: '国际线路',
+            source: 'speed.cloudflare.com',
+            parallel_streams: 4,
+            download_bits_per_second: 100_000_000,
+            upload_bits_per_second: 50_000_000,
+            http_code: 200,
+            error: null,
+          }],
+        },
+      }],
+      cancelled: false,
+      error: null,
+    }
+    expect(normalizeSpeedTestBasicEnd(payload)).toMatchObject({
+      schemaVersion: 2,
+      stages: [{ payload: { measurements: [{ parallelStreams: 4 }] } }],
+    })
+    expect(normalizeSpeedTestBasicEnd({
+      ...payload,
+      stages: [{
+        ...payload.stages[0],
+        payload: {
+          measurements: [{
+            ...payload.stages[0].payload.measurements[0],
+            parallel_streams: 0,
+          }],
+        },
+      }],
+    })).toBeNull()
   })
 
   it('rejects invalid secret bytes and malformed references before invoking Tauri', async () => {

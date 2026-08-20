@@ -27,13 +27,14 @@ localdesk-ipc.workspace = true
 localdesk-remote-core.workspace = true
 localdesk-transfers.workspace = true
 nix.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
 tokio.workspace = true
+tempfile.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true

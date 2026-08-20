@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SPEEDTEST_SCHEMA_VERSION: u16 = 1;
+pub const SPEEDTEST_SCHEMA_VERSION: u16 = 2;
 pub const SPEEDTEST_LATENCY_PROBES_PER_TARGET: usize = 3;
 pub const SPEEDTEST_MAX_LATENCY_TARGETS: usize = 16;
 pub const SPEEDTEST_MAX_MIRRORS: usize = 8;
@@ -13,6 +13,27 @@ pub enum SpeedTestStage {
     Latency,
     Bandwidth,
     IpPurity,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeedTestRunKind {
+    Basic,
+    IpPurity,
+}
+
+impl SpeedTestRunKind {
+    pub fn classify(stages: &[SpeedTestStage]) -> Option<Self> {
+        let has_basic = stages
+            .iter()
+            .any(|stage| matches!(stage, SpeedTestStage::Latency | SpeedTestStage::Bandwidth));
+        let has_purity = stages.contains(&SpeedTestStage::IpPurity);
+        match (has_basic, has_purity) {
+            (true, false) => Some(Self::Basic),
+            (false, true) => Some(Self::IpPurity),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -58,6 +79,7 @@ pub struct BandwidthMeasurement {
     pub kind: BandwidthKind,
     pub label: String,
     pub source: String,
+    pub parallel_streams: u8,
     pub download_bits_per_second: Option<u64>,
     pub upload_bits_per_second: Option<u64>,
     pub http_code: Option<u16>,
@@ -70,6 +92,7 @@ impl BandwidthMeasurement {
             && self.label.len() <= 128
             && !self.source.is_empty()
             && self.source.len() <= 512
+            && (1..=16).contains(&self.parallel_streams)
             && self.error.as_deref().is_none_or(|e| e.len() <= SPEEDTEST_MAX_REASON_BYTES)
     }
 }
@@ -374,6 +397,7 @@ impl SpeedTestDeepOutput {
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpeedTestCancelResult {
+    pub run_kind: SpeedTestRunKind,
     pub cancelled: bool,
     pub reason: String,
 }
@@ -467,6 +491,7 @@ mod tests {
                 kind: BandwidthKind::International,
                 label: "国际线路".to_owned(),
                 source: "speed.cloudflare.com".to_owned(),
+                parallel_streams: 4,
                 download_bits_per_second: Some(32_900_000),
                 upload_bits_per_second: Some(16_600_000),
                 http_code: Some(200),

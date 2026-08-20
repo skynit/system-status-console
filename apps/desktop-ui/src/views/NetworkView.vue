@@ -57,6 +57,7 @@ let requestGeneration = 0
 let refreshTimer: number | null = null
 let elapsedTimer: number | null = null
 let basicStartedAt = 0
+let purityStartedAt = 0
 let iperfStartedAt = 0
 
 const tabs = [
@@ -75,18 +76,26 @@ function initialNetworkTabFromHash(): NetworkTab {
 
 // ---- capability states for the speedtest module ----
 const speedtestCapability = ref<BackendCapability | null>(null)
+const purityCapability = ref<BackendCapability | null>(null)
 const deeptestCapability = ref<BackendCapability | null>(null)
+const capabilityError = ref<BridgeError | null>(null)
 const capabilityLoading = ref(false)
 
 async function loadCapabilities(): Promise<void> {
   if (capabilityLoading.value) return
   capabilityLoading.value = true
+  capabilityError.value = null
   const result = await getBackendCapabilityReport()
   if (!active) return
   capabilityLoading.value = false
-  if (!result || result.kind !== 'report') return
+  if (result.kind === 'error') {
+    capabilityError.value = result.error
+    return
+  }
   speedtestCapability.value =
     result.report.capabilities.find((capability) => capability.id === 'network.speedtest.v1') ?? null
+  purityCapability.value =
+    result.report.capabilities.find((capability) => capability.id === 'network.ip_purity.v1') ?? null
   deeptestCapability.value =
     result.report.capabilities.find((capability) => capability.id === 'network.deeptest.v1') ?? null
 }
@@ -95,22 +104,30 @@ function capabilityStatus(capability: BackendCapability | null): BackendStatus {
   return capability?.status ?? 'unreachable'
 }
 
+function capabilityReason(capability: BackendCapability | null): string {
+  if (capability) return capability.reason
+  if (capabilityLoading.value) return 'capability_loading'
+  return capabilityError.value?.reason ?? 'capability_unknown'
+}
+
 // ---- basic speed test + IP purity: independent runs ----
-// The daemon runs one basic-suite request at a time; each tab owns its own
-// state so starting one never makes the other tab look like it is running.
+// Basic measurement and IP purity use independent daemon lanes and may run together.
 const basicState = ref<BasicState>('idle')
 const basicError = ref<BridgeError | null>(null)
 const basicEnd = ref<SpeedTestBasicEnd | null>(null)
 const basicStages = ref<SpeedTestStageData[]>([])
-const elapsedSeconds = ref(0)
+const basicElapsedSeconds = ref(0)
 
 const purityState = ref<BasicState>('idle')
 const purityError = ref<BridgeError | null>(null)
 const purityEnd = ref<SpeedTestBasicEnd | null>(null)
 const purityStages = ref<SpeedTestStageData[]>([])
+const purityElapsedSeconds = ref(0)
 
 const requestedStages = ref<SpeedTestStage[]>([])
-const requestedStageCount = computed(() => requestedStages.value.length)
+const basicCancelPending = ref(false)
+const purityCancelPending = ref(false)
+const iperfElapsedSeconds = ref(0)
 const loadedStageCount = computed(() => basicStages.value.length)
 
 function stageLoaded(stage: SpeedTestStage): boolean {
@@ -126,7 +143,9 @@ function applyEnd(
   stateRef: typeof basicState,
   errorRef: typeof basicError,
   endRef: typeof basicEnd,
+  cancelRef: typeof basicCancelPending,
 ): void {
+  cancelRef.value = false
   if (result.kind === 'end') {
     endRef.value = result.end
     stateRef.value = result.end.error ? 'error' : 'done'
@@ -145,14 +164,15 @@ function applyEnd(
 }
 
 async function startBasicTest(stages: SpeedTestStage[]): Promise<void> {
-  if (basicState.value === 'running' || purityState.value === 'running') return
+  if (basicState.value === 'running') return
   basicError.value = null
   basicEnd.value = null
   basicStages.value = []
+  basicCancelPending.value = false
   requestedStages.value = stages
   basicState.value = 'running'
   basicStartedAt = Date.now()
-  elapsedSeconds.value = 0
+  basicElapsedSeconds.value = 0
   const result = await runSpeedTestBasic(stages, (stage) => {
     basicStages.value = [...basicStages.value, stage]
   })
@@ -160,18 +180,18 @@ async function startBasicTest(stages: SpeedTestStage[]): Promise<void> {
   if (result.kind === 'end' && result.end.stages.length > 0) {
     basicStages.value = result.end.stages
   }
-  applyEnd(result, basicState, basicError, basicEnd)
+  applyEnd(result, basicState, basicError, basicEnd, basicCancelPending)
 }
 
 async function startPurityCheck(): Promise<void> {
-  if (basicState.value === 'running' || purityState.value === 'running') return
+  if (purityState.value === 'running') return
   purityError.value = null
   purityEnd.value = null
   purityStages.value = []
-  requestedStages.value = ['ip_purity']
+  purityCancelPending.value = false
   purityState.value = 'running'
-  basicStartedAt = Date.now()
-  elapsedSeconds.value = 0
+  purityStartedAt = Date.now()
+  purityElapsedSeconds.value = 0
   const result = await runSpeedTestBasic(['ip_purity'], (stage) => {
     purityStages.value = [...purityStages.value, stage]
   })
@@ -179,13 +199,17 @@ async function startPurityCheck(): Promise<void> {
   if (result.kind === 'end' && result.end.stages.length > 0) {
     purityStages.value = result.end.stages
   }
-  applyEnd(result, purityState, purityError, purityEnd)
+  applyEnd(result, purityState, purityError, purityEnd, purityCancelPending)
 }
 
-async function cancelBasicTest(): Promise<void> {
-  const result = await cancelSpeedTest()
+async function cancelSpeedTestRun(runKind: 'basic' | 'ip_purity'): Promise<void> {
+  const pending = runKind === 'basic' ? basicCancelPending : purityCancelPending
+  if (pending.value) return
+  pending.value = true
+  const result = await cancelSpeedTest(runKind)
   if (result.kind === 'error') {
-    if (basicState.value === 'running') basicError.value = result.error
+    pending.value = false
+    if (runKind === 'basic') basicError.value = result.error
     else purityError.value = result.error
   }
 }
@@ -244,21 +268,34 @@ const iperfServer = ref('127.0.0.1')
 const iperfPort = ref(5201)
 const iperfDirection = ref<Iperf3Direction>('upload')
 const iperfDuration = ref(10)
-const iperfParallel = ref(1)
+const iperfParallel = ref(4)
 const iperfState = ref<IperfState>('idle')
 const iperfError = ref<BridgeError | null>(null)
 const iperfResult = ref<Iperf3Result | null>(null)
 
+const iperfValidationReason = computed<string | null>(() => {
+  const server = iperfServer.value.trim()
+  if (server.length === 0) return '请输入 iperf3 服务器地址'
+  if (server.length > 253 || /[\s\p{Cc}]/u.test(server)) return '服务器地址格式无效'
+  if (!Number.isInteger(iperfPort.value) || iperfPort.value < 1 || iperfPort.value > 65535) {
+    return '端口必须是 1–65535 的整数'
+  }
+  if (!Number.isInteger(iperfDuration.value) || iperfDuration.value < 1 || iperfDuration.value > 60) {
+    return '时长必须是 1–60 秒的整数'
+  }
+  if (!Number.isInteger(iperfParallel.value) || iperfParallel.value < 1 || iperfParallel.value > 8) {
+    return '并发流必须是 1–8 的整数'
+  }
+  return null
+})
+
 async function runIperf3(): Promise<void> {
   if (iperfState.value === 'running') return
+  if (iperfValidationReason.value) return
   const server = iperfServer.value.trim()
-  if (server.length === 0 || server.length > 253) return
   const port = Math.trunc(iperfPort.value)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return
   const duration = Math.trunc(iperfDuration.value)
-  if (!Number.isInteger(duration) || duration < 1 || duration > 60) return
   const parallel = Math.trunc(iperfParallel.value)
-  if (!Number.isInteger(parallel) || parallel < 1 || parallel > 8) return
   const command: SpeedTestDeepCommand = {
     command: 'iperf3_start',
     params: {
@@ -273,7 +310,7 @@ async function runIperf3(): Promise<void> {
   iperfResult.value = null
   iperfState.value = 'running'
   iperfStartedAt = Date.now()
-  elapsedSeconds.value = 0
+  iperfElapsedSeconds.value = 0
   const result = await runSpeedTestDeep(command)
   if (!active) return
   iperfState.value = 'done'
@@ -516,12 +553,19 @@ async function refresh(): Promise<void> {
 
 onMounted(() => {
   void refresh()
+  if (activeTab.value === 'speedtest') {
+    void loadCapabilities()
+  }
   refreshTimer = window.setInterval(() => void refresh(), 2_000)
   elapsedTimer = window.setInterval(() => {
-    if (basicState.value === 'running' || purityState.value === 'running') {
-      elapsedSeconds.value = Math.round((Date.now() - basicStartedAt) / 1000)
-    } else if (iperfState.value === 'running') {
-      elapsedSeconds.value = Math.round((Date.now() - iperfStartedAt) / 1000)
+    if (basicState.value === 'running') {
+      basicElapsedSeconds.value = Math.round((Date.now() - basicStartedAt) / 1000)
+    }
+    if (purityState.value === 'running') {
+      purityElapsedSeconds.value = Math.round((Date.now() - purityStartedAt) / 1000)
+    }
+    if (iperfState.value === 'running') {
+      iperfElapsedSeconds.value = Math.round((Date.now() - iperfStartedAt) / 1000)
     }
   }, 1_000)
 })
@@ -700,6 +744,7 @@ onBeforeUnmount(() => {
                 class="speed-segment"
                 :class="{ 'is-active': speedPanel === 'basic' }"
                 type="button"
+                :aria-pressed="speedPanel === 'basic'"
                 @click="speedPanel = 'basic'"
               >
                 基础测速
@@ -708,6 +753,7 @@ onBeforeUnmount(() => {
                 class="speed-segment"
                 :class="{ 'is-active': speedPanel === 'deep' }"
                 type="button"
+                :aria-pressed="speedPanel === 'deep'"
                 @click="speedPanel = 'deep'"
               >
                 深度测速
@@ -716,6 +762,7 @@ onBeforeUnmount(() => {
                 class="speed-segment"
                 :class="{ 'is-active': speedPanel === 'purity' }"
                 type="button"
+                :aria-pressed="speedPanel === 'purity'"
                 @click="speedPanel = 'purity'"
               >
                 IP 纯净度
@@ -728,31 +775,38 @@ onBeforeUnmount(() => {
                 <span class="capability-token" :class="`is-${capabilityStatus(speedtestCapability)}`">
                   network.speedtest.v1
                 </span>
-                <code class="speed-capability-reason">{{ speedtestCapability?.reason ?? 'capability_unknown' }}</code>
+                <code class="speed-capability-reason">{{ capabilityReason(speedtestCapability) }}</code>
                 <span v-if="basicEnd" class="speed-last-run">上次测速 {{ formatClock(basicEnd.endedAtUnixMs) }}</span>
                 <button
                   v-if="basicState !== 'running'"
                   class="speed-start"
                   type="button"
-                  :disabled="capabilityStatus(speedtestCapability) === 'unsupported' || purityState === 'running'"
+                  :disabled="capabilityStatus(speedtestCapability) !== 'healthy'"
                   @click="() => startBasicTest(['latency', 'bandwidth'])"
                 >
                   开始测速
                 </button>
-                <button v-else class="speed-secondary" type="button" @click="cancelBasicTest">取消</button>
-                <span v-if="purityState === 'running'" class="speed-last-run">IP 纯净度检测进行中，基础测速暂不可用</span>
+                <button
+                  v-else
+                  class="speed-secondary"
+                  type="button"
+                  :disabled="basicCancelPending"
+                  @click="cancelSpeedTestRun('basic')"
+                >
+                  {{ basicCancelPending ? '正在取消' : '取消' }}
+                </button>
               </div>
 
               <div v-if="basicState === 'idle'" class="speed-state">
                 <Hourglass :size="38" aria-hidden="true" />
                 <strong>尚未测速</strong>
-                <code>点击「开始测速」并行测量站点延迟与网络带宽，逐项即时加载；IP 纯净度在右侧独立 tab</code>
+                <code>站点延迟与带宽并行测量，国际带宽使用多流聚合</code>
               </div>
 
               <div v-else-if="basicState === 'running'" class="speed-state" role="status">
                 <LoaderCircle :size="38" class="is-spinning" aria-hidden="true" />
                 <strong>正在测量（已加载 {{ loadedStageCount }}/{{ requestedStages.length }} 项）</strong>
-                <code>已运行 {{ elapsedSeconds }}s · 各模块并行测量，完成即加载 · 可取消</code>
+                <code>已运行 {{ basicElapsedSeconds }}s · 各模块并行测量，完成即加载 · 可取消</code>
               </div>
 
               <template v-else>
@@ -831,7 +885,10 @@ onBeforeUnmount(() => {
                   <div class="bw-subgroup">
                     <h3 class="bw-subgroup-heading">
                       国际线路
-                      <code>speed.cloudflare.com/__down · __up</code>
+                      <code>
+                        {{ internationalMeasurement?.source ?? 'speed.cloudflare.com' }} ·
+                        {{ internationalMeasurement?.parallelStreams ?? '—' }} 并发流聚合
+                      </code>
                     </h3>
                     <div class="bw-metrics">
                       <div class="bw-metric">
@@ -852,7 +909,7 @@ onBeforeUnmount(() => {
                   <div class="bw-subgroup">
                     <h3 class="bw-subgroup-heading">
                       国内镜像下载
-                      <code>ubuntu-releases · 限时 12s/镜像</code>
+                      <code>Ubuntu noble 索引 · 限时 12s/镜像</code>
                     </h3>
                     <div class="network-table-wrap">
                       <table class="network-table speed-mirror-table">
@@ -893,15 +950,20 @@ onBeforeUnmount(() => {
                 <span class="capability-token" :class="`is-${capabilityStatus(deeptestCapability)}`">
                   network.deeptest.v1
                 </span>
-                <code class="speed-capability-reason">{{ deeptestCapability?.reason ?? 'capability_unknown' }}</code>
+                <code class="speed-capability-reason">{{ capabilityReason(deeptestCapability) }}</code>
               </div>
 
               <section class="speed-band" aria-label="iperf3 测速">
                 <h2 class="speed-band-heading">iperf3 测速 <small>手动指定服务器 · 结果来自 iperf3 --json</small></h2>
-                <form class="iperf-form" @submit.prevent="runIperf3">
+                <form class="iperf-form" aria-describedby="iperf-validation" @submit.prevent="runIperf3">
                   <div class="iperf-field">
                     <label for="iperf-server">服务器</label>
-                    <input id="iperf-server" v-model="iperfServer" placeholder="host" required>
+                    <input
+                      id="iperf-server"
+                      v-model="iperfServer"
+                      placeholder="host"
+                      required
+                    >
                   </div>
                   <div class="iperf-field">
                     <label for="iperf-port">端口</label>
@@ -923,13 +985,27 @@ onBeforeUnmount(() => {
                     <label for="iperf-parallel">并行</label>
                     <input id="iperf-parallel" v-model.number="iperfParallel" type="number" min="1" max="8" class="iperf-short" required>
                   </div>
-                  <button class="speed-start" type="submit" :disabled="iperfState === 'running'">启动 iperf3</button>
+                  <button
+                    class="speed-start"
+                    type="submit"
+                    :disabled="iperfState === 'running' || Boolean(iperfValidationReason) || capabilityStatus(deeptestCapability) !== 'healthy'"
+                  >
+                    启动 iperf3
+                  </button>
                   <button v-if="iperfState === 'running'" class="speed-secondary" type="button" @click="stopIperf3">停止</button>
                 </form>
+                <p
+                  id="iperf-validation"
+                  class="iperf-help"
+                  :class="{ 'is-error': iperfValidationReason }"
+                  :role="iperfValidationReason ? 'alert' : undefined"
+                >
+                  {{ iperfValidationReason ?? '并发流范围 1–8，默认 4；双向模式按上传、下载依次测量' }}
+                </p>
 
                 <div v-if="iperfState === 'running'" class="iperf-running" role="status">
                   <LoaderCircle :size="20" class="is-spinning" aria-hidden="true" />
-                  <span>iperf3 运行中（已 {{ elapsedSeconds }}s）…</span>
+                  <span>iperf3 运行中（已 {{ iperfElapsedSeconds }}s）…</span>
                 </div>
                 <div v-else-if="iperfError" class="speed-refresh-error" role="status">
                   <CircleAlert :size="16" aria-hidden="true" />
@@ -1044,33 +1120,41 @@ onBeforeUnmount(() => {
 
             <div v-else class="speed-purity">
               <div class="speed-toolbar">
-                <span class="capability-token" :class="`is-${capabilityStatus(speedtestCapability)}`">
-                  network.speedtest.v1
+                <span class="capability-token" :class="`is-${capabilityStatus(purityCapability)}`">
+                  network.ip_purity.v1
                 </span>
-                <code class="speed-capability-reason">{{ speedtestCapability?.reason ?? 'capability_unknown' }}</code>
+                <code class="speed-capability-reason">{{ capabilityReason(purityCapability) }}</code>
                 <span v-if="purityEnd" class="speed-last-run">上次检测 {{ formatClock(purityEnd.endedAtUnixMs) }}</span>
                 <button
                   v-if="purityState !== 'running'"
                   class="speed-start"
                   type="button"
-                  :disabled="capabilityStatus(speedtestCapability) === 'unsupported' || basicState === 'running'"
+                  :disabled="capabilityStatus(purityCapability) !== 'healthy'"
                   @click="startPurityCheck"
                 >
                   检测
                 </button>
-                <button v-else class="speed-secondary" type="button" @click="cancelBasicTest">取消</button>
+                <button
+                  v-else
+                  class="speed-secondary"
+                  type="button"
+                  :disabled="purityCancelPending"
+                  @click="cancelSpeedTestRun('ip_purity')"
+                >
+                  {{ purityCancelPending ? '正在取消' : '取消' }}
+                </button>
               </div>
 
               <div v-if="purityState === 'idle'" class="speed-state">
                 <Hourglass :size="38" aria-hidden="true" />
                 <strong>尚未检测</strong>
-                <code>点击「检测」查询出口 IP 基础事实与风险值（ip-api.com + ipok.io）· 与基础测速相互独立</code>
+                <code>查询出口 IP 基础事实与风险值（ip-api.com + ipok.io）</code>
               </div>
 
               <div v-else-if="purityState === 'running'" class="speed-state" role="status">
                 <LoaderCircle :size="38" class="is-spinning" aria-hidden="true" />
                 <strong>正在检测 IP 风险…</strong>
-                <code>已运行 {{ elapsedSeconds }}s · 查询 ip-api.com 与 ipok.io</code>
+                <code>已运行 {{ purityElapsedSeconds }}s · 查询 ip-api.com 与 ipok.io</code>
               </div>
 
               <template v-else>
@@ -1229,15 +1313,20 @@ onBeforeUnmount(() => {
             <dd :class="`is-${applicationCapability.status}`">{{ applicationCapability.status }}</dd>
             <code>{{ applicationCapability.reason }}</code>
           </div>
-          <div v-if="activeTab === 'speedtest'" class="network-fact-row">
+          <div v-if="activeTab === 'speedtest' && speedPanel === 'basic'" class="network-fact-row">
             <dt><component :is="statusIcon(capabilityStatus(speedtestCapability))" :size="19" aria-hidden="true" />基础测速</dt>
             <dd :class="`is-${capabilityStatus(speedtestCapability)}`">{{ capabilityStatus(speedtestCapability) }}</dd>
-            <code>{{ speedtestCapability?.reason ?? 'capability_unknown' }}</code>
+            <code>{{ capabilityReason(speedtestCapability) }}</code>
           </div>
-          <div v-if="activeTab === 'speedtest'" class="network-fact-row">
+          <div v-else-if="activeTab === 'speedtest' && speedPanel === 'deep'" class="network-fact-row">
             <dt><component :is="statusIcon(capabilityStatus(deeptestCapability))" :size="19" aria-hidden="true" />深度测速</dt>
             <dd :class="`is-${capabilityStatus(deeptestCapability)}`">{{ capabilityStatus(deeptestCapability) }}</dd>
-            <code>{{ deeptestCapability?.reason ?? 'capability_unknown' }}</code>
+            <code>{{ capabilityReason(deeptestCapability) }}</code>
+          </div>
+          <div v-else-if="activeTab === 'speedtest' && speedPanel === 'purity'" class="network-fact-row">
+            <dt><component :is="statusIcon(capabilityStatus(purityCapability))" :size="19" aria-hidden="true" />IP 纯净度</dt>
+            <dd :class="`is-${capabilityStatus(purityCapability)}`">{{ capabilityStatus(purityCapability) }}</dd>
+            <code>{{ capabilityReason(purityCapability) }}</code>
           </div>
           <div class="network-fact-row compact">
             <dt><Gauge :size="19" aria-hidden="true" />coverage</dt>
@@ -1265,15 +1354,20 @@ onBeforeUnmount(() => {
         <code>{{ applicationCapability.reason }}</code>
       </div>
       <template v-if="activeTab === 'speedtest'">
-        <div class="network-status-item compact">
+        <div v-if="speedPanel === 'basic'" class="network-status-item compact">
           <component :is="statusIcon(capabilityStatus(speedtestCapability))" :size="17" :class="`is-${capabilityStatus(speedtestCapability)}`" aria-hidden="true" />
           <span>基础测速</span><strong :class="`is-${capabilityStatus(speedtestCapability)}`">{{ capabilityStatus(speedtestCapability) }}</strong>
-          <code>{{ speedtestCapability?.reason ?? 'capability_unknown' }}</code>
+          <code>{{ capabilityReason(speedtestCapability) }}</code>
         </div>
-        <div class="network-status-item compact">
+        <div v-else-if="speedPanel === 'deep'" class="network-status-item compact">
           <component :is="statusIcon(capabilityStatus(deeptestCapability))" :size="17" :class="`is-${capabilityStatus(deeptestCapability)}`" aria-hidden="true" />
           <span>深度测速</span><strong :class="`is-${capabilityStatus(deeptestCapability)}`">{{ capabilityStatus(deeptestCapability) }}</strong>
-          <code>{{ deeptestCapability?.reason ?? 'capability_unknown' }}</code>
+          <code>{{ capabilityReason(deeptestCapability) }}</code>
+        </div>
+        <div v-else class="network-status-item compact">
+          <component :is="statusIcon(capabilityStatus(purityCapability))" :size="17" :class="`is-${capabilityStatus(purityCapability)}`" aria-hidden="true" />
+          <span>IP 纯净度</span><strong :class="`is-${capabilityStatus(purityCapability)}`">{{ capabilityStatus(purityCapability) }}</strong>
+          <code>{{ capabilityReason(purityCapability) }}</code>
         </div>
       </template>
       <div v-if="activeTab !== 'speedtest'" class="network-status-item compact">

@@ -1995,6 +1995,7 @@ dependencies = [
  "localdesk-remote-core",
  "localdesk-transfers",
  "nix",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",

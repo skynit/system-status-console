@@ -25,7 +25,7 @@ use localdesk_domain::{
     MAX_NETWORK_INTERFACES, MAX_USAGE_APPLICATIONS, NETWORK_SCHEMA_VERSION,
     NOTE_CONTENT_CHUNK_BYTES, NOTES_SCHEMA_VERSION, NetworkSnapshot, NoteDocument, NoteExport,
     NotePage, NotesCommand, NotesOutput, RequestHealth, SpeedTestCancelResult,
-    SpeedTestDeepCommand, SpeedTestDeepOutput, TELEMETRY_SCHEMA_VERSION, TelemetrySnapshot,
+    SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestRunKind, TELEMETRY_SCHEMA_VERSION, TelemetrySnapshot,
     USAGE_SCHEMA_VERSION, UsageSummary,
     UsageSummaryQuery, aggregate_request_health, capability_catalog,
 };
@@ -112,7 +112,8 @@ pub type SpeedTestProvider =
     Arc<dyn Fn(Vec<localdesk_domain::SpeedTestStage>) -> SpeedTestProviderFuture + Send + Sync>;
 pub type SpeedTestCancelProviderFuture =
     Pin<Box<dyn Future<Output = Result<SpeedTestCancelResult, SnapshotProviderError>> + Send + 'static>>;
-pub type SpeedTestCancelProvider = Arc<dyn Fn() -> SpeedTestCancelProviderFuture + Send + Sync>;
+pub type SpeedTestCancelProvider =
+    Arc<dyn Fn(SpeedTestRunKind) -> SpeedTestCancelProviderFuture + Send + Sync>;
 pub type SpeedTestDeepProviderFuture =
     Pin<Box<dyn Future<Output = Result<SpeedTestDeepOutput, SnapshotProviderError>> + Send + 'static>>;
 pub type SpeedTestDeepProvider =
@@ -166,7 +167,7 @@ impl ServerConfig {
             speedtest_cancel_provider: None,
             speedtest_deep_provider: None,
             notes_export_permit: Arc::new(Semaphore::new(1)),
-            speedtest_permits: Arc::new(Semaphore::new(1)),
+            speedtest_permits: Arc::new(Semaphore::new(2)),
         }
     }
 
@@ -1103,7 +1104,7 @@ async fn handle_connection_inner(
             };
             serve_speedtest_stream(&mut stream, &mut receiver, request.request_id, deadline).await
         }
-        RequestBody::SpeedTestCancel(_) => {
+        RequestBody::SpeedTestCancel(cancel_request) => {
             let deadline = accepted_at + SNAPSHOT_TOTAL_DEADLINE;
             let Some(provider) = config.speedtest_cancel_provider else {
                 return write_terminal_error(
@@ -1118,7 +1119,7 @@ async fn handle_connection_inner(
                 )
                 .await;
             };
-            let result = match timeout_at(deadline, provider()).await {
+            let result = match timeout_at(deadline, provider(cancel_request.run_kind)).await {
                 Ok(Ok(result)) => result,
                 Ok(Err(error)) => {
                     return write_terminal_error(

@@ -25,6 +25,7 @@ use tokio::{
 const SSH_PROGRAM: &str = "/usr/bin/ssh";
 const SFTP_PROGRAM: &str = "/usr/bin/sftp";
 const TARGET_ALIAS: &str = "localdesk-target";
+const TERMINAL_TYPE: &str = "xterm-256color";
 const CONNECT_TIMEOUT_SECONDS: u8 = 15;
 pub const MAX_TERMINAL_OUTPUT_BYTES: usize = 64 * 1024;
 pub const MAX_TERMINAL_INPUT_BYTES: usize = 64 * 1024;
@@ -234,7 +235,7 @@ impl OpenSshAdapter {
         askpass: Option<&AskpassSecret>,
     ) -> Result<TerminalSession, AdapterError> {
         let prepared = PreparedConnection::new(profile)?;
-        let mut command = fixed_command(SSH_PROGRAM, prepared.terminal_args());
+        let mut command = prepared.terminal_command();
         if let Some(askpass) = askpass {
             askpass.configure_std_command(&mut command);
         }
@@ -887,6 +888,12 @@ impl PreparedConnection {
         ]
     }
 
+    fn terminal_command(&self) -> Command {
+        let mut command = fixed_command(SSH_PROGRAM, self.terminal_args());
+        command.env("TERM", TERMINAL_TYPE);
+        command
+    }
+
     fn sftp_args(&self, batch_path: &Path) -> Vec<OsString> {
         vec![
             OsString::from("-S"),
@@ -1223,6 +1230,15 @@ mod tests {
         assert_eq!(terminal[2], OsStr::new("-tt"));
         assert_eq!(terminal[3], OsStr::new(TARGET_ALIAS));
         assert!(!terminal.iter().any(|arg| arg == "target.example"));
+
+        let command = prepared.terminal_command();
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("TERM"))
+                .and_then(|(_, value)| value),
+            Some(OsStr::new(TERMINAL_TYPE))
+        );
 
         let sftp = prepared.sftp_args(Path::new("/tmp/batch"));
         assert_eq!(sftp[0], OsStr::new("-S"));

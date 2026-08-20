@@ -253,6 +253,7 @@ function speedtestCapabilities() {
       health: { status: 'healthy' as const, capabilityReason: 'all_requested_capabilities_available' },
       capabilities: [
         capability('network.speedtest.v1', 'healthy', 'curl_available'),
+        capability('network.ip_purity.v1', 'healthy', 'curl_available'),
         capability('network.deeptest.v1', 'healthy', 'iperf3_available'),
       ],
     },
@@ -261,7 +262,7 @@ function speedtestCapabilities() {
 
 function basicEnd(): SpeedTestBasicEnd {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     startedAtUnixMs: 1_000,
     endedAtUnixMs: 2_000,
     stages: [
@@ -290,6 +291,7 @@ function basicEnd(): SpeedTestBasicEnd {
               kind: 'international',
               label: '国际线路',
               source: 'speed.cloudflare.com',
+              parallelStreams: 4,
               downloadBitsPerSecond: 32_900_000,
               uploadBitsPerSecond: 16_600_000,
               httpCode: 200,
@@ -299,6 +301,7 @@ function basicEnd(): SpeedTestBasicEnd {
               kind: 'domestic',
               label: '阿里云',
               source: 'mirrors.aliyun.com',
+              parallelStreams: 1,
               downloadBitsPerSecond: 0,
               uploadBitsPerSecond: null,
               httpCode: 302,
@@ -307,37 +310,47 @@ function basicEnd(): SpeedTestBasicEnd {
           ],
         },
       },
-      {
-        stage: 'ip_purity',
-        payload: {
-          purity: {
-            source: 'ip-api.com + ipok.io',
-            ip: '38.92.26.68',
-            country: '美国',
-            region: '犹他州',
-            city: 'Draper',
-            isp: 'FiberState, LLC',
-            org: 'Fiberstate LLC',
-            asn: 'AS26042',
-            asname: 'FIBERSTATE',
-            proxy: false,
-            hosting: false,
-            mobile: false,
-            riskScore: 30,
-            ipType: 'hosting',
-            signals: ['hosting'],
-            riskSources: [
-              { source: 'ip-api', risk: 10, weight: 0.5 },
-              { source: 'Scamalytics', risk: 30, weight: 0.9 },
-            ],
-            blocklistChecked: 5,
-            blocklistListed: [],
-            riskError: null,
-            error: null,
-          },
+    ],
+    cancelled: false,
+    error: null,
+  }
+}
+
+function purityEnd(): SpeedTestBasicEnd {
+  return {
+    schemaVersion: 2,
+    startedAtUnixMs: 1_000,
+    endedAtUnixMs: 2_000,
+    stages: [{
+      stage: 'ip_purity',
+      payload: {
+        purity: {
+          source: 'ip-api.com + ipok.io',
+          ip: '38.92.26.68',
+          country: '美国',
+          region: '犹他州',
+          city: 'Draper',
+          isp: 'FiberState, LLC',
+          org: 'Fiberstate LLC',
+          asn: 'AS26042',
+          asname: 'FIBERSTATE',
+          proxy: false,
+          hosting: false,
+          mobile: false,
+          riskScore: 30,
+          ipType: 'hosting',
+          signals: ['hosting'],
+          riskSources: [
+            { source: 'ip-api', risk: 10, weight: 0.5 },
+            { source: 'Scamalytics', risk: 30, weight: 0.9 },
+          ],
+          blocklistChecked: 5,
+          blocklistListed: [],
+          riskError: null,
+          error: null,
         },
       },
-    ],
+    }],
     cancelled: false,
     error: null,
   }
@@ -365,8 +378,22 @@ describe('NetworkView speedtest tab', () => {
     expect(wrapper.text()).toContain('基础测速')
     expect(wrapper.text()).toContain('尚未测速')
     expect(wrapper.text()).toContain('curl_available')
-    expect(wrapper.text()).toContain('iperf3_available')
     expect(wrapper.get('.speed-start').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.speed-basic').text()).not.toContain('IP 纯净度')
+    wrapper.unmount()
+  })
+
+  it('loads capabilities when the speedtest tab is opened by direct link', async () => {
+    window.location.hash = '#/network?tab=speedtest'
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+
+    expect(mockedCapabilities).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-network-tab="speedtest"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('.speed-start').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('curl_available')
     wrapper.unmount()
   })
 
@@ -379,6 +406,7 @@ describe('NetworkView speedtest tab', () => {
         health: { status: 'degraded', capabilityReason: 'appd_online_with_unavailable_capabilities' },
         capabilities: [
           capability('network.speedtest.v1', 'unsupported', 'curl_missing'),
+          capability('network.ip_purity.v1', 'healthy', 'curl_available'),
           capability('network.deeptest.v1', 'degraded', 'iperf3_missing'),
         ],
       },
@@ -393,7 +421,7 @@ describe('NetworkView speedtest tab', () => {
     wrapper.unmount()
   })
 
-  it('runs the basic test and renders latency, bandwidth and IP purity facts', async () => {
+  it('runs the basic test and renders only latency and bandwidth facts', async () => {
     mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
     mockedCapabilities.mockResolvedValue(speedtestCapabilities())
     mockedBasic.mockResolvedValue({ kind: 'end', end: basicEnd() })
@@ -411,6 +439,7 @@ describe('NetworkView speedtest tab', () => {
     expect(wrapper.text()).toContain('正常')
     expect(wrapper.text()).toContain('32.9')
     expect(wrapper.text()).toContain('16.6')
+    expect(wrapper.text()).toContain('4 并发流聚合')
     expect(wrapper.text()).toContain('curl_exit_47_too_many_redirects')
     expect(wrapper.text()).toContain('上次测速')
     wrapper.unmount()
@@ -440,9 +469,9 @@ describe('NetworkView speedtest tab', () => {
   it('detects IP purity in its own tab with risk score and derived human/bot share', async () => {
     mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
     mockedCapabilities.mockResolvedValue(speedtestCapabilities())
-    const end = basicEnd()
+    const end = purityEnd()
     mockedBasic.mockImplementation((stages, onStage) => {
-      onStage(end.stages[2])
+      onStage(end.stages[0])
       return Promise.resolve({ kind: 'end', end })
     })
     const wrapper = mount(NetworkView)
@@ -453,6 +482,8 @@ describe('NetworkView speedtest tab', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('尚未检测')
+    expect(wrapper.get('.speed-purity .capability-token').text()).toContain('network.ip_purity.v1')
+    expect(wrapper.get('.speed-purity').text()).not.toContain('基础测速')
     await wrapper.get('.speed-start').trigger('click')
     await flushPromises()
 
@@ -468,7 +499,7 @@ describe('NetworkView speedtest tab', () => {
     wrapper.unmount()
   })
 
-  it('keeps the purity tab independent while the basic test is running', async () => {
+  it('runs IP purity concurrently with the basic measurement', async () => {
     mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
     mockedCapabilities.mockResolvedValue(speedtestCapabilities())
     mockedBasic.mockReturnValue(new Promise(() => {}))
@@ -481,13 +512,17 @@ describe('NetworkView speedtest tab', () => {
 
     expect(mockedBasic).toHaveBeenCalledWith(['latency', 'bandwidth'], expect.any(Function))
     expect(wrapper.text()).toContain('正在测量')
-    // switch to the purity tab: it must stay idle, not "正在检测"
+    // IP purity owns a separate backend lane and stays available.
     await wrapper.findAll('.speed-segment')[2].trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('尚未检测')
-    expect(wrapper.text()).not.toContain('正在检测 IP 风险')
-    // its 检测 button is disabled while the basic run is active
-    expect(wrapper.get('.speed-start').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.speed-start').attributes('disabled')).toBeUndefined()
+    await wrapper.get('.speed-start').trigger('click')
+    await flushPromises()
+    expect(mockedBasic).toHaveBeenCalledWith(['ip_purity'], expect.any(Function))
+    expect(mockedBasic).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('正在检测 IP 风险')
+    expect(wrapper.text()).not.toContain('基础测速正在')
     wrapper.unmount()
   })
 
@@ -495,7 +530,10 @@ describe('NetworkView speedtest tab', () => {
     mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
     mockedCapabilities.mockResolvedValue(speedtestCapabilities())
     mockedBasic.mockReturnValue(new Promise(() => {}))
-    mockedCancel.mockResolvedValue({ kind: 'cancelled', result: { cancelled: true, reason: 'cancellation_requested' } })
+    mockedCancel.mockResolvedValue({
+      kind: 'cancelled',
+      result: { runKind: 'basic', cancelled: true, reason: 'cancellation_requested' },
+    })
     const wrapper = mount(NetworkView)
     await flushPromises()
     await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
@@ -509,6 +547,7 @@ describe('NetworkView speedtest tab', () => {
     await cancelButton!.trigger('click')
     await flushPromises()
     expect(mockedCancel).toHaveBeenCalledTimes(1)
+    expect(mockedCancel).toHaveBeenCalledWith('basic')
     wrapper.unmount()
   })
 
@@ -604,6 +643,10 @@ describe('NetworkView speedtest tab', () => {
     expect(wrapper.text()).toContain('尚未运行测速')
     await wrapper.get('.iperf-form').trigger('submit')
     await flushPromises()
+    expect(mockedDeep).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'iperf3_start',
+      params: expect.objectContaining({ parallel: 4 }),
+    }))
     expect(wrapper.text()).toContain('95.0')
     expect(wrapper.text()).toContain('10.0.0.8:5201')
 
@@ -622,6 +665,24 @@ describe('NetworkView speedtest tab', () => {
     await linssidButton!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('launched_via_pkexec')
+    wrapper.unmount()
+  })
+
+  it('shows inline iperf3 validation and prevents an invalid run', async () => {
+    mockedNetwork.mockResolvedValue({ kind: 'snapshot', snapshot: snapshot([interfaceSample()]) })
+    mockedCapabilities.mockResolvedValue(speedtestCapabilities())
+    const wrapper = mount(NetworkView)
+    await flushPromises()
+    await wrapper.get('[data-network-tab="speedtest"]').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.speed-segment')[1].trigger('click')
+    await wrapper.get('#iperf-parallel').setValue('0')
+    await flushPromises()
+
+    expect(wrapper.get('#iperf-validation').text()).toContain('并发流必须是 1–8 的整数')
+    expect(wrapper.get('.iperf-form .speed-start').attributes('disabled')).toBeDefined()
+    await wrapper.get('.iperf-form').trigger('submit')
+    expect(mockedDeep).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

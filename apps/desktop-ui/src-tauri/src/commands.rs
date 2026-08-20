@@ -1,13 +1,14 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use localdesk_domain::{
-    APPD_HEALTH_CAPABILITY, NETWORK_PER_APP_CAPABILITY, NETWORK_SYSTEM_CAPABILITY,
+    APPD_HEALTH_CAPABILITY, NETWORK_DEEPTEST_CAPABILITY, NETWORK_IP_PURITY_CAPABILITY,
+    NETWORK_PER_APP_CAPABILITY, NETWORK_SPEEDTEST_CAPABILITY, NETWORK_SYSTEM_CAPABILITY,
     NOTE_CONTENT_CHUNK_BYTES, NOTES_CAPABILITY, NetworkSnapshot, NoteDocument, NoteDraftMeta,
     NoteExport, NoteExportFormat, NoteMutationResult, NotePage, NoteQuery, NoteWriteIntent,
     NotesCommand, NotesOutput, REMOTE_FTP_CAPABILITY, REMOTE_SFTP_CAPABILITY,
     REMOTE_SMB_CAPABILITY, REMOTE_SSH_CAPABILITY, SpeedTestBasicEnd, SpeedTestCancelResult,
-    SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestStageData, TELEMETRY_SNAPSHOT_CAPABILITY,
-    TRANSFERS_CAPABILITY, TelemetrySnapshot, USAGE_FOREGROUND_CAPABILITY, UsageSummary,
-    UsageSummaryQuery,
+    SpeedTestDeepCommand, SpeedTestDeepOutput, SpeedTestRunKind, SpeedTestStageData,
+    TELEMETRY_SNAPSHOT_CAPABILITY, TRANSFERS_CAPABILITY, TelemetrySnapshot,
+    USAGE_FOREGROUND_CAPABILITY, UsageSummary, UsageSummaryQuery,
 };
 use localdesk_ipc::{
     ClientError, HealthReport, MAX_FRAME_PAYLOAD_BYTES, RequestEnvelope, SystemInfoReport,
@@ -105,6 +106,9 @@ fn health_request() -> RequestEnvelope {
             TELEMETRY_SNAPSHOT_CAPABILITY.to_owned(),
             NETWORK_SYSTEM_CAPABILITY.to_owned(),
             NETWORK_PER_APP_CAPABILITY.to_owned(),
+            NETWORK_SPEEDTEST_CAPABILITY.to_owned(),
+            NETWORK_IP_PURITY_CAPABILITY.to_owned(),
+            NETWORK_DEEPTEST_CAPABILITY.to_owned(),
             USAGE_FOREGROUND_CAPABILITY.to_owned(),
             REMOTE_SSH_CAPABILITY.to_owned(),
             REMOTE_SFTP_CAPABILITY.to_owned(),
@@ -150,9 +154,9 @@ pub async fn speedtest_basic(
         &path,
         RequestEnvelope::speedtest_basic(stages),
         move |stage| {
-            on_stage.send(stage).map_err(|_| {
-                ClientError::Protocol(localdesk_ipc::ProtocolError::UnexpectedBody)
-            })
+            on_stage
+                .send(stage)
+                .map_err(|_| ClientError::Protocol(localdesk_ipc::ProtocolError::UnexpectedBody))
         },
     )
     .await
@@ -160,9 +164,11 @@ pub async fn speedtest_basic(
 }
 
 #[tauri::command]
-pub async fn speedtest_cancel() -> Result<SpeedTestCancelResult, BridgeError> {
+pub async fn speedtest_cancel(
+    run_kind: SpeedTestRunKind,
+) -> Result<SpeedTestCancelResult, BridgeError> {
     let path = runtime_socket_path().map_err(|error| error.into_bridge_error())?;
-    request_speedtest_cancel(&path, RequestEnvelope::speedtest_cancel())
+    request_speedtest_cancel(&path, RequestEnvelope::speedtest_cancel(run_kind))
         .await
         .map_err(Into::into)
 }
@@ -723,6 +729,17 @@ mod tests {
                 .requested_capabilities
                 .contains(&NETWORK_PER_APP_CAPABILITY.to_owned())
         );
+        for capability in [
+            NETWORK_SPEEDTEST_CAPABILITY,
+            NETWORK_IP_PURITY_CAPABILITY,
+            NETWORK_DEEPTEST_CAPABILITY,
+        ] {
+            assert!(
+                request
+                    .requested_capabilities
+                    .contains(&capability.to_owned())
+            );
+        }
         assert!(
             request
                 .requested_capabilities
